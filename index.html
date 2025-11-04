@@ -1,0 +1,668 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Streams — Quick Gallery</title>
+
+  <style>
+    :root{
+      --bg:#0f1720;
+      --card:#0b1220;
+      --accent:#1f6feb;
+      --muted:#94a3b8;
+      --gap:14px;
+      --thumb-min-width:320px;
+    }
+    html,body{height:100%;margin:0;background:var(--bg);color:#fff;font-family:Inter,system-ui,Segoe UI,Roboto,Arial;}
+    .container{max-width:1400px;margin:1px auto;padding:0 18px;}
+    header{display:flex;align-items:center;gap:16px;margin-bottom:10px}
+    h1{margin:0;font-size:20px}
+    p.lead{margin:0;color:var(--muted);font-size:13px}
+
+    .controls {
+      display:flex;
+      gap:12px;
+      align-items:center;
+      margin-bottom:12px;
+      color:var(--muted);
+      font-size:14px;
+    }
+    .controls label{display:inline-flex;align-items:center;gap:8px;cursor:pointer}
+    .controls button{background:rgba(255,255,255,0.04);border:1px solid rgba(255,255,255,0.04);color:#fff;padding:6px 10px;border-radius:6px;cursor:pointer}
+
+    .grid{
+      display:grid;
+      gap:var(--gap);
+      grid-template-columns: repeat(2, minmax(var(--thumb-min-width), 1fr));
+      align-items:start;
+    }
+    @media (max-width: 920px){ .grid{ grid-template-columns: 1fr; } }
+
+    .card{
+      background:linear-gradient(180deg, rgba(255,255,255,0.02), rgba(255,255,255,0.01));
+      border-radius:10px;
+      overflow:hidden;
+      box-shadow:0 4px 18px rgba(2,6,23,0.65);
+      display:flex;
+      flex-direction:column;
+      border:1px solid rgba(255,255,255,0.02);
+      transition: transform .12s, box-shadow .12s, opacity .12s;
+    }
+    .card.dragging {
+      opacity: 0.6;
+      transform: scale(0.995);
+      box-shadow:0 12px 36px rgba(0,0,0,0.75);
+    }
+
+    .media-wrap{
+      position:relative;
+      width:100%;
+      background:#111;
+      aspect-ratio: 16/9;
+      min-height:0;
+    }
+    .media-wrap::before{ content:''; display:block; padding-top:56.25%; height:0; width:100%; pointer-events:none; }
+
+    .media-inner{
+      position:absolute;
+      inset:0;
+      display:flex;
+      align-items:center;
+      justify-content:center;
+      z-index:2;
+      width:100%;
+      height:100%;
+      overflow:hidden;
+      background:#111;
+    }
+
+    .thumb-img{ width:100%; height:100%; object-fit:cover; display:block; }
+
+    /* Keep: force OvenPlayer internals to fill container */
+    .media-inner .ovp,
+    .media-inner .ovp-player,
+    .media-inner video,
+    .media-inner > div {
+      width:100% !important;
+      height:100% !important;
+      object-fit:cover !important;
+      position:absolute !important;
+      inset:0 !important;
+    }
+
+    /* Keep: badge and close button layering */
+    .badge{
+      position:absolute;
+      left:10px;
+      top:10px;
+      background:rgba(0,0,0,0.6);
+      padding:6px 8px;
+      border-radius:999px;
+      font-size:12px;
+      z-index:4;
+      transition: background .2s, transform .12s;
+      pointer-events:none;
+    }
+
+    .card.live .badge{
+      background: rgba(20,160,60,0.95);
+      color: #fff;
+      transform: translateY(-1px);
+    }
+    .card.playing .badge{
+      background: rgba(220,40,40,0.95);
+      color: #fff;
+      transform: translateY(-1px);
+    }
+
+    .closeBtnCard{
+      position:absolute; right:8px; top:8px; z-index:5;
+      background: rgba(0,0,0,0.55); border:0; color:#fff; padding:6px 8px; border-radius:6px; font-size:13px; cursor:pointer;
+    }
+
+    .card .meta{padding:10px 14px;display:flex;align-items:center;justify-content:space-between; z-index:1}
+    .title{font-size:15px;margin:0}
+    .playBtn{background:var(--accent);border:none;color:white;padding:7px 12px;border-radius:8px;font-size:13px}
+
+    .card.playing{ box-shadow:0 8px 28px rgba(0,0,0,0.7); transform:translateY(-2px); }
+    .ovp-full { width:100% !important; height:100% !important; display:block; }
+
+    .drag-hint { color: var(--muted); font-size:13px; margin-left:6px; }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <header>
+      <div>
+        <h1>Live Streams — Pick one</h1>
+        <p class="lead">Click a thumbnail to replace it with a low-latency WebRTC player. Multiple players can run simultaneously. Streams that are actually publishing are shown first when Auto-sort is enabled.</p>
+      </div>
+    </header>
+
+    <div id="grid" class="grid" aria-live="polite"></div>
+
+    <div class="controls" aria-hidden="false">
+      <label>
+        <input id="autosort_toggle" type="checkbox" />
+        Auto-sort live streams first
+      </label>
+      <button id="resetOrderBtn" title="Reset to original order">Reset order</button>
+      <div class="drag-hint" id="dragHint">Drag cards to reorder when Auto-sort is off.</div>
+    </div>
+  </div>
+
+  <script src="https://cdn.jsdelivr.net/npm/ovenplayer/dist/ovenplayer.js"></script>
+
+  <script>
+    const STREAMS = [
+      { id: 'felix',  label: 'Felix',  mediaPath: '/app/felix',  thumb: '/thumbs/felix.jpg' },
+      { id: 'finn',   label: 'Finn',   mediaPath: '/app/finn',   thumb: '/thumbs/finn.jpg' },
+      { id: 'maxi',   label: 'Maxi',   mediaPath: '/app/maxi',   thumb: '/thumbs/maxi.jpg' },
+      { id: 'daniel', label: 'Daniel', mediaPath: '/app/daniel', thumb: '/thumbs/daniel.jpg' },
+      { id: 'sylvester', label: 'Sylvester', mediaPath: '/app/sylvester', thumb: '/thumbs/sylvester.jpg' }
+    ];
+    const THUMB_SERVER_REFRESH_MS = 3 * 60 * 1000; // 3 minutes
+    const LIVE_POLL_MS = 5 * 1000;                // 5s poll interval for live detection
+    const LIVE_FETCH_TIMEOUT_MS = 4500;            // 4.5s fetch timeout for manifest
+    const REORDER_MIN_INTERVAL_MS = 15 * 1000;     // don't reorder more often than this
+
+    const grid = document.getElementById('grid');
+    const players = {};          // map streamId -> player instance
+    const savedThumbSrc = {};    // original thumb urls
+    const streamIndex = {};      // stable index positioning
+    STREAMS.forEach((s,i) => streamIndex[s.id] = i);
+
+    // Keep: hysteresis counters to avoid flapping
+    const liveCounters = {}; // streamId -> integer
+    const LIVE_THRESHOLD = 2; // needs 2 consecutive polls to flip
+
+    const LS_AUTO_SORT = 'streams_auto_sort_v1';
+    const LS_MANUAL_ORDER = 'streams_manual_order_v1';
+
+    let dragSrcEl = null;
+
+    let reorderTimer = null;
+    let autoSort = true;
+    let lastReorderAt = 0;
+
+    // Keep: suppress reordering while fullscreen is active
+    let fullscreenPaused = false;
+
+    // Keep: same-origin ws/wss URL for OME signalling
+    function buildMediaUrl(mediaPath){
+      const loc = window.location;
+      const wsProto = loc.protocol === 'https:' ? 'wss:' : 'ws:';
+      return wsProto + '//' + loc.host + mediaPath;
+    }
+
+    // Keep: llhls manifest URL used for live checks
+    function buildManifestUrl(mediaPath){
+      const loc = window.location;
+      const httpProto = loc.protocol === 'https:' ? 'https:' : 'http:';
+      const base = mediaPath.endsWith('/') ? mediaPath.slice(0, -1) : mediaPath;
+      return `${httpProto}//${loc.host}${base}/llhls.m3u8`;
+    }
+
+    // Keep: defensive player cleanup
+    function destroyPlayerInstance(player){
+      try {
+        if (!player) return;
+        if (typeof player.remove === 'function') { player.remove(); return; }
+        if (typeof player.destroy === 'function') { player.destroy(); return; }
+        if (typeof player.dispose === 'function') { player.dispose(); return; }
+        console.warn('Player instance has no remove()/destroy()/dispose() method', player);
+      } catch (err) {
+        console.warn('Error while destroying player instance', err);
+      }
+    }
+
+    function enableDraggingOnAllCards(){
+      const cards = grid.querySelectorAll('.card');
+      cards.forEach(c => {
+        c.setAttribute('draggable','true');
+        attachCardDragHandlers(c);
+      });
+      document.body.addEventListener('dragover', onDragOverPreventDefault);
+    }
+
+    function disableDraggingOnAllCards(){
+      const cards = grid.querySelectorAll('.card');
+      cards.forEach(c => {
+        c.removeAttribute('draggable');
+        detachCardDragHandlers(c);
+      });
+      document.body.removeEventListener('dragover', onDragOverPreventDefault);
+    }
+
+    function attachCardDragHandlers(card){
+      if (card._dragHandlersAttached) return;
+      card._dragHandlersAttached = true;
+
+      const onDragStart = (e) => {
+        dragSrcEl = card;
+        card.classList.add('dragging');
+        try { e.dataTransfer.setData('text/plain', card.dataset.streamId || ''); } catch(_) {}
+        e.dataTransfer.effectAllowed = 'move';
+      };
+      const onDragEnd = () => {
+        if (card) card.classList.remove('dragging');
+        dragSrcEl = null;
+      };
+      const onDrop = (e) => {
+        e.preventDefault();
+        const target = card;
+        if (!dragSrcEl || dragSrcEl === target) return;
+        const afterEl = getDragAfterElement(grid, e.clientY);
+        if (afterEl == null) grid.appendChild(dragSrcEl);
+        else grid.insertBefore(dragSrcEl, afterEl);
+        saveManualOrder();
+      };
+      const onDragOver = (e) => { e.preventDefault(); };
+
+      card._onDragStart = onDragStart;
+      card._onDragEnd = onDragEnd;
+      card._onDrop = onDrop;
+      card._onDragOver = onDragOver;
+
+      card.addEventListener('dragstart', onDragStart);
+      card.addEventListener('dragend', onDragEnd);
+      card.addEventListener('drop', onDrop);
+      card.addEventListener('dragover', onDragOver);
+    }
+
+    function detachCardDragHandlers(card){
+      if (!card._dragHandlersAttached) return;
+      try {
+        if (card._onDragStart) card.removeEventListener('dragstart', card._onDragStart);
+        if (card._onDragEnd) card.removeEventListener('dragend', card._onDragEnd);
+        if (card._onDrop) card.removeEventListener('drop', card._onDrop);
+        if (card._onDragOver) card.removeEventListener('dragover', card._onDragOver);
+      } catch (e) { /* ignore */ }
+      delete card._onDragStart;
+      delete card._onDragEnd;
+      delete card._onDrop;
+      delete card._onDragOver;
+      card._dragHandlersAttached = false;
+    }
+
+    function onDragOverPreventDefault(e){ e.preventDefault(); }
+
+    function getDragAfterElement(container, y) {
+      const draggableElements = [...container.querySelectorAll('.card:not(.dragging)')];
+      let closest = null;
+      let closestOffset = Number.NEGATIVE_INFINITY;
+      for (const el of draggableElements) {
+        const box = el.getBoundingClientRect();
+        const offset = y - box.top - box.height / 2;
+        if (offset > closestOffset) {
+          closestOffset = offset;
+          closest = el;
+        }
+      }
+      if (!closest) return null;
+      return (closestOffset < 0) ? closest : closest.nextElementSibling;
+    }
+
+    function saveManualOrder(){
+      try {
+        const order = Array.from(grid.querySelectorAll('.card')).map(c => c.dataset.streamId);
+        localStorage.setItem(LS_MANUAL_ORDER, JSON.stringify(order));
+      } catch (e) { /* ignore */ }
+    }
+
+    function loadManualOrder(){
+      try {
+        const raw = localStorage.getItem(LS_MANUAL_ORDER);
+        if (!raw) return null;
+        const arr = JSON.parse(raw);
+        if (!Array.isArray(arr)) return null;
+        return arr;
+      } catch (e) {
+        return null;
+      }
+    }
+
+    function applyManualOrderIfExists(){
+      const order = loadManualOrder();
+      if (!order) return false;
+      const mapping = {};
+      Array.from(grid.querySelectorAll('.card')).forEach(c => mapping[c.dataset.streamId] = c);
+      order.forEach(id => { if (mapping[id]) grid.appendChild(mapping[id]); });
+      STREAMS.forEach(s => { if (!order.includes(s.id) && mapping[s.id]) grid.appendChild(mapping[s.id]); });
+      return true;
+    }
+
+    function loadAutoSortSetting(){
+      try {
+        const raw = localStorage.getItem(LS_AUTO_SORT);
+        if (raw === null) return true; // default true
+        return raw === 'true';
+      } catch(e){ return true; }
+    }
+    function saveAutoSortSetting(v){
+      try { localStorage.setItem(LS_AUTO_SORT, v ? 'true' : 'false'); } catch(e){}
+    }
+
+    function createGrid(){
+      grid.innerHTML = '';
+      STREAMS.forEach((s, idx) => {
+        savedThumbSrc[s.id] = s.thumb;
+        liveCounters[s.id] = 0;
+
+        const card = document.createElement('div');
+        card.className = 'card';
+        card.dataset.streamId = s.id;
+        card.dataset.streamLabel = s.label;
+        card.dataset.streamIndex = idx;
+        card.dataset.isLive = 'false';
+
+        const mediaWrap = document.createElement('div'); mediaWrap.className='media-wrap';
+
+        const inner = document.createElement('div'); inner.className='media-inner';
+
+        const img = document.createElement('img'); img.className='thumb-img';
+        img.src = s.thumb;
+        img.alt = s.label + ' preview';
+        img.setAttribute('data-stream-id', s.id);
+        img.addEventListener('click', () => activateCard(s, card));
+
+        inner.appendChild(img);
+        mediaWrap.appendChild(inner);
+
+        const badge = document.createElement('div'); badge.className='badge'; badge.textContent='Offline';
+        mediaWrap.appendChild(badge);
+
+        const closeBtn = document.createElement('button'); closeBtn.className='closeBtnCard';
+        closeBtn.textContent = 'Close'; closeBtn.style.display = 'none';
+        closeBtn.addEventListener('click', ev => { ev.stopPropagation(); restoreThumbnail(card, s.id); });
+        mediaWrap.appendChild(closeBtn);
+
+        const meta = document.createElement('div'); meta.className='meta';
+        const title = document.createElement('div'); title.className='title'; title.textContent = s.label;
+        const playBtn = document.createElement('button'); playBtn.className='playBtn'; playBtn.textContent='Play';
+        playBtn.addEventListener('click', ev => { ev.stopPropagation(); activateCard(s, card); });
+        meta.appendChild(title); meta.appendChild(playBtn);
+
+        card.appendChild(mediaWrap);
+        card.appendChild(meta);
+        grid.appendChild(card);
+      });
+
+      if (!autoSort) applyManualOrderIfExists();
+
+      if (autoSort) disableDraggingOnAllCards(); else enableDraggingOnAllCards();
+    }
+
+    function activateCard(stream, cardEl){
+      if (!cardEl) return;
+      const streamId = stream.id;
+      if (players[streamId]) return;
+
+      const mediaWrap = cardEl.querySelector('.media-wrap');
+      if (!mediaWrap) return;
+      const inner = mediaWrap.querySelector('.media-inner');
+      if (!inner) return;
+
+      inner.innerHTML = '';
+
+      const playerContainer = document.createElement('div');
+      playerContainer.id = 'player_' + streamId;
+      playerContainer.style.width = '100%'; playerContainer.style.height = '100%';
+      playerContainer.style.position = 'absolute'; playerContainer.style.inset = '0';
+      inner.appendChild(playerContainer);
+
+      const closeBtn = mediaWrap.querySelector('.closeBtnCard');
+      if (closeBtn) closeBtn.style.display = 'block';
+
+      cardEl.classList.add('playing');
+      const badge = cardEl.querySelector('.badge');
+      if (badge) badge.textContent = (cardEl.dataset.isLive === 'true') ? 'Live' : 'Playing';
+
+      const mediaUrl = buildMediaUrl(stream.mediaPath);
+      const opts = {
+        autoStart: true,
+        autoFallback: true,
+        mute: true, // muted by default to allow multiple autoplay
+        controls: true,
+        sources: [{ type: 'webrtc', file: mediaUrl }],
+        parseStream: { enabled: true },
+        webrtcConfig: { timeoutMaxRetry: 4, connectionTimeout: 6000 }
+      };
+
+      try {
+        const playerInstance = OvenPlayer.create(playerContainer.id, opts);
+        players[streamId] = playerInstance;
+
+        try {
+          if (typeof playerInstance.on === 'function') {
+            playerInstance.on('fullscreenChanged', (isFull) => {
+              fullscreenPaused = !!isFull;
+            });
+          }
+        } catch(_) {}
+
+        setTimeout(() => {
+          const wrapper = document.getElementById(playerContainer.id);
+          if (wrapper) wrapper.classList.add('ovp-full');
+          const ovpEl = wrapper.querySelector('.ovp');
+          if (ovpEl) ovpEl.classList.add('ovp-full');
+        }, 120);
+      } catch (err) {
+        console.error('Failed to create OvenPlayer for', streamId, err);
+        restoreThumbnail(cardEl, streamId);
+      }
+    }
+
+    function restoreThumbnail(cardEl, streamId){
+      if (!cardEl) return;
+      const playerInstance = players[streamId];
+      if (playerInstance) {
+        destroyPlayerInstance(playerInstance);
+        delete players[streamId];
+      }
+
+      const mediaWrap = cardEl.querySelector('.media-wrap');
+      if (!mediaWrap) return;
+      const inner = mediaWrap.querySelector('.media-inner');
+      if (!inner) return;
+
+      const closeBtn = mediaWrap.querySelector('.closeBtnCard');
+      if (closeBtn) closeBtn.style.display = 'none';
+
+      inner.innerHTML = '';
+      const img = document.createElement('img'); img.className='thumb-img';
+      img.setAttribute('data-stream-id', streamId);
+      img.src = savedThumbSrc[streamId] || (STREAMS.find(s=>s.id===streamId)?.thumb || '');
+      img.alt = STREAMS.find(s=>s.id===streamId)?.label || 'preview';
+      img.addEventListener('click', ()=> {
+        const s = STREAMS.find(x=>x.id===streamId);
+        if (s) activateCard(s, cardEl);
+      });
+      inner.appendChild(img);
+
+      const badge = mediaWrap.querySelector('.badge');
+      if (badge) badge.textContent = (cardEl.dataset.isLive === 'true') ? 'Live' : 'Preview';
+
+      cardEl.classList.remove('playing');
+
+      if (!autoSort) saveManualOrder();
+    }
+
+    // Keep: live detection using llhls with hysteresis
+    async function isStreamLiveOnce(stream){
+      const url = buildManifestUrl(stream.mediaPath);
+      const controller = new AbortController();
+      const id = setTimeout(() => controller.abort(), LIVE_FETCH_TIMEOUT_MS);
+      try {
+        const resp = await fetch(url, {
+          method: 'GET',
+          cache: 'no-store',
+          signal: controller.signal,
+          credentials: 'same-origin'
+        });
+        clearTimeout(id);
+        if (!resp.ok) return false;
+        const text = await resp.text();
+        if (!text) return false;
+        if (text.includes('#EXTM3U')) return true;
+        return true;
+      } catch (err) {
+        return false;
+      }
+    }
+
+    function setCardLiveState(cardEl, isLive){
+      const prev = cardEl.dataset.isLive === 'true';
+      if (prev === isLive) return false;
+      cardEl.dataset.isLive = isLive ? 'true' : 'false';
+      if (isLive) {
+        cardEl.classList.add('live');
+        const badge = cardEl.querySelector('.badge');
+        if (badge && !cardEl.classList.contains('playing')) badge.textContent = 'Live';
+      } else {
+        cardEl.classList.remove('live');
+        const badge = cardEl.querySelector('.badge');
+        if (badge && !cardEl.classList.contains('playing')) badge.textContent = 'Preview';
+      }
+      return true;
+    }
+
+    // Keep: reorder without destroying player DOM
+    function reorderCardsByLive(){
+      if (fullscreenPaused) return;
+
+      const now = Date.now();
+      if (now - lastReorderAt < REORDER_MIN_INTERVAL_MS) {
+        return;
+      }
+
+      const container = grid;
+      const cards = Array.from(container.querySelectorAll('.card'));
+      const sorted = cards.slice().sort((a,b) => {
+        const aLive = a.dataset.isLive === 'true' ? 1 : 0;
+        const bLive = b.dataset.isLive === 'true' ? 1 : 0;
+        if (aLive !== bLive) return bLive - aLive;
+        const ai = parseInt(a.dataset.streamIndex || '0', 10);
+        const bi = parseInt(b.dataset.streamIndex || '0', 10);
+        return ai - bi;
+      });
+
+      const currentOrder = cards.map(c => c.dataset.streamId).join(',');
+      const newOrder = sorted.map(c => c.dataset.streamId).join(',');
+      if (currentOrder === newOrder) return;
+
+      sorted.forEach(c => container.appendChild(c));
+      lastReorderAt = Date.now();
+    }
+
+    // Keep: poll loop with hysteresis + reorder
+    async function pollLiveStatuses(){
+      const tasks = STREAMS.map(async s => {
+        const card = document.querySelector(`.card[data-stream-id="${s.id}"]`);
+        if (!card) return;
+        const liveNow = await isStreamLiveOnce(s);
+        liveCounters[s.id] = liveCounters[s.id] || 0;
+        if (liveNow) {
+          liveCounters[s.id] = Math.min(LIVE_THRESHOLD, liveCounters[s.id] + 1);
+        } else {
+          liveCounters[s.id] = Math.max(-LIVE_THRESHOLD, liveCounters[s.id] - 1);
+        }
+        const currentlyLive = card.dataset.isLive === 'true';
+        if (liveCounters[s.id] >= LIVE_THRESHOLD && !currentlyLive) {
+          setCardLiveState(card, true);
+        } else if (liveCounters[s.id] <= -LIVE_THRESHOLD && currentlyLive) {
+          setCardLiveState(card, false);
+        }
+      });
+
+      await Promise.all(tasks);
+
+      if (autoSort && !fullscreenPaused) reorderCardsByLive();
+    }
+
+    const autosortToggle = document.getElementById('autosort_toggle');
+    const dragHint = document.getElementById('dragHint');
+    const resetOrderBtn = document.getElementById('resetOrderBtn');
+
+    function setAutoSort(enabled){
+      autoSort = !!enabled;
+      saveAutoSortSetting(autoSort);
+      if (autoSort) {
+        disableDraggingOnAllCards();
+        dragHint.textContent = 'Auto-sort is on — live streams are shown first.';
+        if (!fullscreenPaused) reorderCardsByLive();
+        if (!reorderTimer) {
+          reorderTimer = setInterval(() => pollLiveStatuses().catch(()=>{}), LIVE_POLL_MS);
+        }
+      } else {
+        enableDraggingOnAllCards();
+        dragHint.textContent = 'Drag cards to reorder. Manual order is saved.';
+        if (reorderTimer) { clearInterval(reorderTimer); reorderTimer = null; }
+        applyManualOrderIfExists();
+      }
+    }
+
+    autosortToggle.addEventListener('change', (e) => {
+      setAutoSort(e.target.checked);
+    });
+
+    resetOrderBtn.addEventListener('click', (ev) => {
+      ev.preventDefault();
+      localStorage.removeItem(LS_MANUAL_ORDER);
+      const cards = Array.from(grid.querySelectorAll('.card'));
+      cards.sort((a,b)=>{
+        return streamIndex[a.dataset.streamId] - streamIndex[b.dataset.streamId];
+      }).forEach(c => grid.appendChild(c));
+    });
+
+    function refreshServerThumbs(){
+      STREAMS.forEach(s=>{
+        const img = document.querySelector(`img.thumb-img[data-stream-id="${s.id}"]`);
+        if (img) img.src = (savedThumbSrc[s.id] || s.thumb) + '?t=' + Date.now();
+      });
+    }
+
+    // Keep: pause auto-sort while fullscreen
+    document.addEventListener('fullscreenchange', () => {
+      fullscreenPaused = !!(document.fullscreenElement || document.webkitFullscreenElement);
+      if (!fullscreenPaused && autoSort) {
+        setTimeout(() => reorderCardsByLive(), 150);
+      }
+    });
+
+    // Keep: init order — build DOM first, then enable autosort/polling
+    (function init(){
+      createGrid();
+
+      const savedAuto = loadAutoSortSetting();
+      try { if (autosortToggle) autosortToggle.checked = savedAuto; } catch(_) {}
+      setAutoSort(savedAuto);
+
+      if (!autoSort) applyManualOrderIfExists();
+
+      pollLiveStatuses().catch(()=>{/*ignore*/});
+      setInterval(() => pollLiveStatuses().catch(()=>{/*ignore*/}), LIVE_POLL_MS);
+      setInterval(refreshServerThumbs, THUMB_SERVER_REFRESH_MS);
+    })();
+
+    window.saveManualOrder = saveManualOrder;
+    window.applyManualOrderIfExists = applyManualOrderIfExists;
+    window.setAutoSort = setAutoSort;
+    window.closeAllPlayers = function(){
+      Object.keys(players).forEach(id=>{
+        try { destroyPlayerInstance(players[id]); } catch(e){}
+        const card = document.querySelector(`.card[data-stream-id="${id}"]`);
+        if (card) restoreThumbnail(card, id);
+      });
+      for (const k in players) delete players[k];
+    };
+
+    window.addEventListener('beforeunload', () => {
+      for (const id in players){
+        try { destroyPlayerInstance(players[id]); } catch(e){}
+      }
+    });
+  </script>
+</body>
+</html>
