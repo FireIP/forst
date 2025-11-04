@@ -1,0 +1,13 @@
+{
+  "streams": [
+    {"id": "stream", "label": "Stream", "mediaPath": "/app/stream", "thumb": "/thumbs/stream.jpg"}
+  ],
+  "thumbServerRefreshMs": 180000,
+  "livePollMs": 5000,
+  "liveFetchTimeoutMs": 4500,
+  "reorderMinIntervalMs": 15000,
+  "liveThreshold": 2,
+  "maxReconnectAttempts": 10,
+  "reconnectDelayBaseMs": 2000,
+  "defaultAutoSort": true
+}
