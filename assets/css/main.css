@@ -1,0 +1,106 @@
+/* Grid & Card Layout */
+.grid {
+    display: grid;
+    gap: 1rem;
+    grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
+    align-items: start;
+}
+
+.card.dragging {
+    opacity: 0.6;
+    transform: scale(0.995);
+}
+
+.media-wrap {
+    position: relative;
+    width: 100%;
+    background: #000;
+    aspect-ratio: 16/9;
+    overflow: hidden;
+}
+
+.media-inner {
+    position: absolute;
+    inset: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 2;
+    width: 100%;
+    height: 100%;
+    overflow: hidden;
+    background: #000;
+}
+
+.thumb-img {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+    display: block;
+    cursor: pointer;
+}
+
+.media-inner .ovp, .media-inner .ovp-player, .media-inner video, .media-inner > div {
+    width: 100% !important;
+    height: 100% !important;
+    object-fit: cover !important;
+    position: absolute !important;
+    inset: 0 !important;
+    z-index: 1 !important;
+}
+
+.ovp-full {
+    width: 100% !important;
+    height: 100% !important;
+    display: block;
+}
+
+.status-badge {
+    position: absolute;
+    left: 10px;
+    top: 10px;
+    z-index: 4;
+    pointer-events: none;
+    transition: transform .12s;
+}
+
+.card.live .status-badge, .card.playing .status-badge {
+    transform: translateY(-1px);
+}
+
+.closeBtnCard {
+    position: absolute;
+    right: 8px;
+    top: 8px;
+    z-index: 5;
+}
+
+.card.playing {
+    box-shadow: 0 8px 28px rgba(0, 0, 0, 0.7);
+    transform: translateY(-2px);
+}
+
+.loader {
+    font-size: .9rem;
+    color: #aaa;
+}
+
+/* Ensure player overlays do not cover badge/close button unexpectedly */
+.media-wrap .status-badge, .media-wrap .closeBtnCard {
+    position: absolute;
+}
+
+/* Responsive tweak: enforce min-height for player to avoid collapse during drag */
+.card .media-wrap {
+    min-height: 0;
+}
+
+@media (max-width: 600px) {
+    .grid {
+        grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+    }
+
+    .media-wrap {
+        aspect-ratio: 16/9;
+    }
+}
