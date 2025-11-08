@@ -13,7 +13,7 @@ export function createGrid() {
         runtime.liveCounters[s.id] = 0;
 
         const card = document.createElement('div');
-        card.className = 'card h-100';
+        card.className = 'card h-90';
         card.dataset.streamId = s.id;
         card.dataset.streamLabel = s.label;
         card.dataset.streamIndex = idx;
@@ -48,7 +48,7 @@ export function createGrid() {
         mediaWrap.appendChild(closeBtn);
 
         const cardBody = document.createElement('div');
-        cardBody.className = 'card-body d-flex justify-content-between align-items-center p-3';
+        cardBody.className = 'card-body d-flex justify-content-between align-items-center p-2';
         const title = document.createElement('h5');
         title.className = 'card-title mb-0 h6';
         title.textContent = s.label;
