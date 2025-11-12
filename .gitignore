@@ -1,2 +1,7 @@
 # Local runtime config (do not commit secrets)
 config.json
+
+# Dependencies
+node_modules/
+package-lock.json
+
