@@ -10,6 +10,10 @@ export const settings = {
     MAX_RECONNECT_ATTEMPTS: 10,
     RECONNECT_DELAY_BASE: 2000,
     LS_AUTO_SORT: 'streams_auto_sort_v1',
-    LS_MANUAL_ORDER: 'streams_manual_order_v1'
+    LS_MANUAL_ORDER: 'streams_manual_order_v1',
+    VIEWER_STATS_POLL_MS: 10000,
+    VIEWER_STATS_TIMEOUT_MS: 5000,
+    statsApiUrl: null,
+    vhostName: 'default'
 };
 
