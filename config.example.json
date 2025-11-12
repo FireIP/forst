@@ -9,5 +9,9 @@
   "liveThreshold": 2,
   "maxReconnectAttempts": 10,
   "reconnectDelayBaseMs": 2000,
-  "defaultAutoSort": true
+  "defaultAutoSort": true,
+  "statsApiUrl": null,
+  "vhostName": "default",
+  "viewerStatsPollMs": 10000,
+  "viewerStatsTimeoutMs": 5000
 }
