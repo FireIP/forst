@@ -23,9 +23,24 @@ This app loads runtime configuration from `/config.json` if present, otherwise i
   "liveThreshold": 2,
   "maxReconnectAttempts": 10,
   "reconnectDelayBaseMs": 2000,
-  "defaultAutoSort": true
+  "defaultAutoSort": true,
+  "statsApiUrl": "http://your-ome-server:8081",
+  "vhostName": "default",
+  "viewerStatsPollMs": 10000,
+  "viewerStatsTimeoutMs": 5000
 }
 ```
+
+### Viewer Count Feature
+
+To enable viewer count display on stream cards, configure the following in `config.json`:
+
+- `statsApiUrl` — OvenMediaEngine API base URL (e.g., `http://localhost:8081`). Set to `null` to disable viewer counting.
+- `vhostName` — Virtual host name in OvenMediaEngine (default: `"default"`).
+- `viewerStatsPollMs` — Polling interval for viewer stats in milliseconds (default: 10000).
+- `viewerStatsTimeoutMs` — Timeout for viewer stats API requests in milliseconds (default: 5000).
+
+The viewer count badge appears in the top-right corner of each stream card when viewers are connected.
 
 ## Modularisierte Frontend-Architektur (Refactor 2025-11-07)
 

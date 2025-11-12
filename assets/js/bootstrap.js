@@ -4,6 +4,7 @@ import {loadExternalConfig} from './config.js';
 import {runtime} from './state.js';
 import {createGrid} from './dom.js';
 import {pollLiveStatuses} from './livePolling.js';
+import {fetchViewerStats} from './viewerStats.js';
 import {destroyPlayerInstance, refreshServerThumbs} from './utils.js';
 import {loadAutoSortSetting, reorderCardsByLive, resetOrderToOriginal, setAutoSort} from './ordering.js';
 import './debug.js';
@@ -24,6 +25,14 @@ async function init() {
     setInterval(() => pollLiveStatuses().catch(() => {
     }), settings.LIVE_POLL_MS);
     setInterval(() => refreshServerThumbs(), settings.THUMB_SERVER_REFRESH_MS);
+
+    // Start viewer stats polling if API is configured
+    if (settings.statsApiUrl) {
+        fetchViewerStats().catch(() => {
+        });
+        setInterval(() => fetchViewerStats().catch(() => {
+        }), settings.VIEWER_STATS_POLL_MS);
+    }
 
     autosortToggle?.addEventListener('change', e => setAutoSort(e.target.checked, pollLiveStatuses));
     resetOrderBtn?.addEventListener('click', ev => {

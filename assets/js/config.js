@@ -12,7 +12,11 @@ export function applyExternalConfig(cfg) {
         liveThreshold: 'LIVE_THRESHOLD',
         maxReconnectAttempts: 'MAX_RECONNECT_ATTEMPTS',
         reconnectDelayBaseMs: 'RECONNECT_DELAY_BASE',
-        defaultAutoSort: 'DEFAULT_AUTO_SORT'
+        defaultAutoSort: 'DEFAULT_AUTO_SORT',
+        statsApiUrl: 'statsApiUrl',
+        vhostName: 'vhostName',
+        viewerStatsPollMs: 'VIEWER_STATS_POLL_MS',
+        viewerStatsTimeoutMs: 'VIEWER_STATS_TIMEOUT_MS'
     };
     Object.entries(map).forEach(([src, dest]) => {
         if (Object.prototype.hasOwnProperty.call(cfg, src) && typeof cfg[src] !== 'undefined') {

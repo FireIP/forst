@@ -64,6 +64,15 @@
     transition: transform .12s;
 }
 
+.viewer-count-badge {
+    position: absolute;
+    right: 10px;
+    top: 10px;
+    z-index: 4;
+    pointer-events: none;
+    font-size: 0.75rem;
+}
+
 .card.live .status-badge, .card.playing .status-badge {
     transform: translateY(-1px);
 }
