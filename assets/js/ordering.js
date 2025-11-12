@@ -7,6 +7,7 @@ import {
     enableDraggingOnAllCards,
     loadManualOrder
 } from './drag.js';
+import {notifyStreamLive} from './notifications.js';
 
 export function loadAutoSortSetting() {
     try {
@@ -35,6 +36,16 @@ export function setCardLiveState(cardEl, isLive) {
         if (badge && !cardEl.classList.contains('playing')) {
             badge.textContent = 'Live';
             badge.className = 'badge bg-success status-badge';
+        }
+        // Notify when stream goes live (transition from offline to online)
+        if (!prev) {
+            const streamId = cardEl.dataset.streamId;
+            const stream = settings.streams.find(s => s.id === streamId);
+            if (stream) {
+                notifyStreamLive(stream).catch(err => {
+                    console.warn('Failed to send notification:', err);
+                });
+            }
         }
     } else {
         cardEl.classList.remove('live');

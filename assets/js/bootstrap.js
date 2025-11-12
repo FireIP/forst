@@ -6,6 +6,7 @@ import {createGrid} from './dom.js';
 import {pollLiveStatuses} from './livePolling.js';
 import {destroyPlayerInstance, refreshServerThumbs} from './utils.js';
 import {loadAutoSortSetting, reorderCardsByLive, resetOrderToOriginal, setAutoSort} from './ordering.js';
+import {initializeNotifications, shouldShowNotifications} from './notifications.js';
 import './debug.js';
 
 window.debug = {settings, runtime, pollLiveStatuses};
@@ -24,6 +25,13 @@ async function init() {
     setInterval(() => pollLiveStatuses().catch(() => {
     }), settings.LIVE_POLL_MS);
     setInterval(() => refreshServerThumbs(), settings.THUMB_SERVER_REFRESH_MS);
+
+    // Initialize PWA and notifications
+    if (shouldShowNotifications()) {
+        initializeNotifications().catch(err => {
+            console.warn('Failed to initialize notifications:', err);
+        });
+    }
 
     autosortToggle?.addEventListener('change', e => setAutoSort(e.target.checked, pollLiveStatuses));
     resetOrderBtn?.addEventListener('click', ev => {
