@@ -1,0 +1,1158 @@
+<!doctype html>
+<html data-bs-theme="dark" lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>G2G Latency Tool</title>
+  <link crossorigin="anonymous"
+        href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/css/bootstrap.min.css"
+        integrity="sha384-T3c6CoIi6uLrA9TneNEoa7RxnatzjcDSCmG1MXxSR1GAsXEV/Dwwykc2MPK8M2HN"
+        rel="stylesheet">
+  <style>
+    canvas, video { background: #111; border-radius: 6px; display: block; }
+    .marker-box {
+      position: absolute; top: 0; left: 0;
+      width: 40px; height: 40px;
+      border: 2px solid #f00;
+      pointer-events: none;
+      border-radius: 3px;
+    }
+    .video-wrap { position: relative; }
+    pre.log-box {
+      background: #0d1117; border-radius: 6px;
+      padding: 12px; max-height: 200px;
+      overflow-y: auto; font-size: 0.78rem; color: #ccc;
+      white-space: pre-wrap; word-break: break-all;
+    }
+    .stat-val { font-family: monospace; font-size: 1.05rem; }
+    #histCanvas, #extHistCanvas { display: block; }
+    #timelineCanvas, #extTimelineCanvas { display: block; background: #1a1a2e; border-radius: 6px; }
+    .nav-link { cursor: pointer; }
+    .form-label { font-size: 0.85rem; margin-bottom: 2px; }
+    th { font-size: 0.8rem; font-weight: 600; color: #adb5bd !important; }
+    td { font-size: 0.82rem; }
+    .badge-row .badge { font-size: 0.85rem; padding: 5px 10px; }
+  </style>
+</head>
+<body class="bg-dark text-white">
+
+<!--
+  RTCPeerConnection monkey-patch must run before OvenPlayer loads so we can
+  capture the PC it creates for the getStats() integration.
+-->
+<script>
+(function () {
+  const _Orig = window.RTCPeerConnection;
+  function PatchedRTCPeerConnection(...args) {
+    const pc = new _Orig(...args);
+    document.dispatchEvent(new CustomEvent('_pc_created', { detail: pc }));
+    return pc;
+  }
+  PatchedRTCPeerConnection.prototype = _Orig.prototype;
+  Object.setPrototypeOf(PatchedRTCPeerConnection, _Orig);
+  window.RTCPeerConnection = PatchedRTCPeerConnection;
+})();
+</script>
+
+<div class="container-fluid py-4" style="max-width: 1400px">
+  <header class="mb-4">
+    <h1 class="h3 mb-1">🕒 G2G Latency Measurement Tool</h1>
+    <p class="text-muted mb-0 small">
+      Measure end-to-end pipeline latency for your OBS → RTMP → OME → WebRTC → Browser setup.
+      <strong>Loopback</strong> measures your local WebRTC stack.
+      <strong>External Stream</strong> connects to a live OME stream and reports
+      <code>getStats()</code> timing plus optional pixel-marker detection.
+    </p>
+  </header>
+
+  <ul class="nav nav-tabs mb-4" id="mainTabs" role="tablist">
+    <li class="nav-item" role="presentation">
+      <button class="nav-link active" id="tab-loopback" data-bs-toggle="tab"
+              data-bs-target="#loopbackPane" type="button" role="tab">
+        🔁 Loopback Test
+      </button>
+    </li>
+    <li class="nav-item" role="presentation">
+      <button class="nav-link" id="tab-external" data-bs-toggle="tab"
+              data-bs-target="#externalPane" type="button" role="tab">
+        📡 External Stream
+      </button>
+    </li>
+    <li class="nav-item" role="presentation">
+      <button class="nav-link" id="tab-help" data-bs-toggle="tab"
+              data-bs-target="#helpPane" type="button" role="tab">
+        ℹ️ How it works
+      </button>
+    </li>
+  </ul>
+
+  <div class="tab-content">
+
+    <!-- ══════════════════ TAB 1 – LOOPBACK ══════════════════ -->
+    <div class="tab-pane fade show active" id="loopbackPane" role="tabpanel">
+
+      <div class="row g-3">
+        <!-- Source canvas -->
+        <div class="col-xl-6">
+          <div class="card bg-body-secondary h-100">
+            <div class="card-header fw-semibold">Source Canvas <small class="text-muted fw-normal">(generated locally)</small></div>
+            <div class="card-body p-2">
+              <div class="video-wrap">
+                <canvas id="srcCanvas" width="640" height="360" class="w-100"></canvas>
+                <div class="marker-box" title="Timing marker region (top-left)"></div>
+              </div>
+              <p class="text-muted small mt-1 mb-0">
+                The top-left square toggles between black ↔ white. Each toggle records
+                <code>t_src = performance.now()</code>.
+              </p>
+            </div>
+          </div>
+        </div>
+
+        <!-- Remote video -->
+        <div class="col-xl-6">
+          <div class="card bg-body-secondary h-100">
+            <div class="card-header fw-semibold">Remote Video <small class="text-muted fw-normal">(after local WebRTC encode/decode)</small></div>
+            <div class="card-body p-2">
+              <div class="video-wrap">
+                <video id="remoteVideo" autoplay playsinline muted class="w-100" style="aspect-ratio:16/9"></video>
+                <div class="marker-box" title="Detected region"></div>
+              </div>
+              <!-- Hidden detection canvas -->
+              <canvas id="detectCanvas" width="64" height="64" class="d-none"></canvas>
+              <p class="text-muted small mt-1 mb-0">
+                Marker transitions are detected via pixel sampling.
+                Each detection records <code>t_play = performance.now()</code>.
+              </p>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Controls -->
+      <div class="card bg-body-secondary mt-3">
+        <div class="card-body">
+          <div class="d-flex gap-3 align-items-end flex-wrap">
+            <div>
+              <label class="form-label" for="codecSelect">Codec</label>
+              <select id="codecSelect" class="form-select form-select-sm" style="width:auto">
+                <option value="VP8" selected>VP8</option>
+                <option value="H264">H.264</option>
+                <option value="VP9">VP9</option>
+                <option value="AV1">AV1</option>
+              </select>
+            </div>
+            <div>
+              <label class="form-label" for="toggleInterval">Toggle interval (ms)</label>
+              <input id="toggleInterval" type="number" value="1500" min="500" max="10000" step="100"
+                     class="form-control form-control-sm" style="width:100px">
+            </div>
+            <div>
+              <label class="form-label" for="warmupCount">Warm-up samples</label>
+              <input id="warmupCount" type="number" value="3" min="0" max="20" step="1"
+                     class="form-control form-control-sm" style="width:80px"
+                     title="First N samples discarded while WebRTC stabilises">
+            </div>
+            <div class="d-flex gap-2">
+              <button class="btn btn-success" id="lbStartBtn">▶ Start</button>
+              <button class="btn btn-danger" id="lbStopBtn" disabled>■ Stop</button>
+              <button class="btn btn-outline-secondary" id="lbClearBtn">Clear</button>
+              <button class="btn btn-outline-info" id="lbExportBtn">Export CSV</button>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Stats -->
+      <div class="card bg-body-secondary mt-3">
+        <div class="card-header d-flex justify-content-between align-items-center">
+          <span class="fw-semibold">Pixel-marker Latency Statistics</span>
+          <span class="badge bg-primary" id="lbSampleBadge">0 samples</span>
+        </div>
+        <div class="card-body">
+          <div class="row g-2 badge-row mb-3" id="lbStatBadges">
+            <div class="col text-muted small">No samples yet. Click Start.</div>
+          </div>
+          <canvas id="histCanvas" class="w-100" style="height:110px;background:#1a1a2e;border-radius:6px"></canvas>
+          <canvas id="timelineCanvas" class="w-100 mt-2" style="height:70px"></canvas>
+        </div>
+      </div>
+
+      <!-- Log -->
+      <div class="mt-3">
+        <pre class="log-box" id="lbLog">Ready. Click ▶ Start to begin the loopback latency test.
+The test uses two local RTCPeerConnections so no network or OME is required.</pre>
+      </div>
+    </div><!-- /loopbackPane -->
+
+
+    <!-- ══════════════════ TAB 2 – EXTERNAL STREAM ══════════════════ -->
+    <div class="tab-pane fade" id="externalPane" role="tabpanel">
+
+      <!-- URL + connect controls -->
+      <div class="card bg-body-secondary mb-3">
+        <div class="card-body">
+          <div class="row g-2 align-items-end">
+            <div class="col-md-7">
+              <label class="form-label" for="streamUrl">WebRTC Stream URL (OME)</label>
+              <input id="streamUrl" type="text" class="form-control font-monospace"
+                     placeholder="wss://your-server:3334/app/stream">
+            </div>
+            <div class="col-auto">
+              <button class="btn btn-success" id="extStartBtn">▶ Connect</button>
+              <button class="btn btn-danger ms-2" id="extStopBtn" disabled>■ Disconnect</button>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="row g-3">
+        <!-- Player -->
+        <div class="col-xl-6">
+          <div class="card bg-body-secondary">
+            <div class="card-header fw-semibold">Stream Player</div>
+            <div class="card-body p-0">
+              <div id="ovpPlayerWrap" style="aspect-ratio:16/9;background:#000;border-radius:0 0 6px 6px;overflow:hidden">
+                <div id="ovpPlayer" style="width:100%;height:100%"></div>
+              </div>
+            </div>
+          </div>
+
+          <!-- Pixel detection for external stream -->
+          <div class="card bg-body-secondary mt-3">
+            <div class="card-header fw-semibold">
+              Pixel Marker Detection
+              <span class="badge bg-secondary ms-2" title="Works when OBS injects a toggling B/W square in the stream">Needs OBS marker</span>
+            </div>
+            <div class="card-body">
+              <div class="form-check form-switch mb-2">
+                <input class="form-check-input" type="checkbox" id="extPixelDetect" role="switch">
+                <label class="form-check-label" for="extPixelDetect">Enable pixel detection</label>
+              </div>
+              <div class="row g-2 mb-2">
+                <div class="col-auto">
+                  <label class="form-label">Region (% of video: X Y W H)</label>
+                  <div class="d-flex gap-1">
+                    <input type="number" id="mX" class="form-control form-control-sm" style="width:56px" value="0"  min="0" max="90"  title="Left edge %">
+                    <input type="number" id="mY" class="form-control form-control-sm" style="width:56px" value="0"  min="0" max="90"  title="Top edge %">
+                    <input type="number" id="mW" class="form-control form-control-sm" style="width:56px" value="8"  min="1" max="50"  title="Width %">
+                    <input type="number" id="mH" class="form-control form-control-sm" style="width:56px" value="14" min="1" max="50"  title="Height %">
+                  </div>
+                </div>
+              </div>
+              <canvas id="extDetectCanvas" width="160" height="90" class="d-none"></canvas>
+
+              <!-- Optional WebSocket source-time sync -->
+              <hr class="my-2">
+              <div class="form-check form-switch mb-2">
+                <input class="form-check-input" type="checkbox" id="wsEnable" role="switch">
+                <label class="form-check-label" for="wsEnable">
+                  Sync source-time via WebSocket
+                  <span class="badge bg-secondary ms-1" title="Run a local helper that controls OBS marker and sends timestamps">Optional</span>
+                </label>
+              </div>
+              <div id="wsSection" class="d-none">
+                <div class="d-flex gap-2 align-items-end mb-1">
+                  <div>
+                    <label class="form-label" for="wsUrl">WebSocket URL</label>
+                    <input id="wsUrl" type="text" class="form-control form-control-sm"
+                           value="ws://localhost:9090" placeholder="ws://localhost:9090">
+                  </div>
+                  <button class="btn btn-sm btn-outline-primary" id="wsConnectBtn">Connect WS</button>
+                  <button class="btn btn-sm btn-outline-danger d-none" id="wsDisconnectBtn">Disconnect</button>
+                </div>
+                <p class="text-muted small mb-0">
+                  Your helper script sends JSON lines:
+                  <code>{"state":1,"tSrc":&lt;ms&gt;}</code> where <code>tSrc</code> is
+                  <code>performance.now()</code> on the same machine when the OBS marker toggled.
+                </p>
+              </div>
+
+              <p class="text-muted small mt-2 mb-0">
+                Without WS sync, detection logs <em>when</em> transitions arrive but cannot compute
+                absolute latency. With WS sync, latency = <code>t_play − t_src</code> per toggle.
+              </p>
+            </div>
+          </div>
+
+          <!-- External latency stats (only when WS sync is active) -->
+          <div class="card bg-body-secondary mt-3" id="extLatencyCard" style="display:none!important">
+            <div class="card-header d-flex justify-content-between">
+              <span class="fw-semibold">Pixel-marker Latency (WS-synced)</span>
+              <span class="badge bg-primary" id="extSampleBadge">0 samples</span>
+            </div>
+            <div class="card-body">
+              <div class="row g-2 badge-row mb-3" id="extStatBadges">
+                <div class="col text-muted small">No samples yet.</div>
+              </div>
+              <canvas id="extHistCanvas" class="w-100" style="height:110px;background:#1a1a2e;border-radius:6px"></canvas>
+              <canvas id="extTimelineCanvas" class="w-100 mt-2" style="height:70px;background:#1a1a2e;border-radius:6px"></canvas>
+              <div class="mt-2">
+                <button class="btn btn-sm btn-outline-info" id="extExportBtn">Export CSV</button>
+                <button class="btn btn-sm btn-outline-secondary ms-2" id="extClearBtn">Clear</button>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Stats table -->
+        <div class="col-xl-6">
+          <div class="card bg-body-secondary h-100">
+            <div class="card-header d-flex justify-content-between align-items-center fw-semibold">
+              WebRTC <code>getStats()</code>
+              <span class="badge bg-secondary" id="extPollBadge">Not polling</span>
+            </div>
+            <div class="card-body p-0">
+              <table class="table table-sm table-dark table-hover mb-0" id="statsTable">
+                <thead>
+                  <tr>
+                    <th class="ps-3">Metric</th>
+                    <th>Value</th>
+                  </tr>
+                </thead>
+                <tbody id="statsTableBody">
+                  <tr><td colspan="2" class="text-muted text-center ps-3 py-3">Connect to a stream to see stats.</td></tr>
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Log -->
+      <div class="mt-3">
+        <pre class="log-box" id="extLog">Ready. Enter a WebRTC stream URL and click ▶ Connect.</pre>
+      </div>
+    </div><!-- /externalPane -->
+
+
+    <!-- ══════════════════ TAB 3 – HELP ══════════════════ -->
+    <div class="tab-pane fade" id="helpPane" role="tabpanel">
+      <div class="row g-3">
+
+        <div class="col-md-6">
+          <div class="card bg-body-secondary h-100">
+            <div class="card-header fw-semibold">🔁 Approach 1 — Loopback (pixel marker)</div>
+            <div class="card-body small">
+              <ol>
+                <li>The <strong>Source Canvas</strong> draws animated content plus a large
+                  black/white square in the top-left corner that <em>toggles state</em> every
+                  N ms (configurable).</li>
+                <li>Exactly when the state changes, <code>t_src = performance.now()</code>
+                  is recorded.</li>
+                <li>The canvas stream is fed into a local
+                  <code>RTCPeerConnection</code> pair (pc1 → pc2), passing through the
+                  chosen codec's encoder and decoder entirely in the browser.</li>
+                <li>A <code>requestAnimationFrame</code> loop reads the remote
+                  <code>&lt;video&gt;</code> into a tiny <code>&lt;canvas&gt;</code> each
+                  frame, computes average luminance of the marker region, and detects the
+                  transition.</li>
+                <li>When detected, <code>t_play = performance.now()</code> is recorded and
+                  <code>latency = t_play − t_src</code> is added to the sample set.</li>
+                <li>Statistics (mean, median, p95, p99, stddev) and a histogram are updated
+                  live.</li>
+              </ol>
+              <p class="mb-0 text-muted">This measures: encoder + RTP packetise + decoder
+                + rAF render latency — the full browser WebRTC pipeline without network.</p>
+            </div>
+          </div>
+        </div>
+
+        <div class="col-md-6">
+          <div class="card bg-body-secondary h-100">
+            <div class="card-header fw-semibold">📡 Approach 2 — External stream (<code>getStats</code>)</div>
+            <div class="card-body small">
+              <ol>
+                <li>Enter your OME WebRTC URL (e.g.
+                  <code>wss://host:3334/app/stream</code>).
+                  OvenPlayer connects and plays the stream.</li>
+                <li>The tool monkey-patches <code>RTCPeerConnection</code> to capture the
+                  underlying PC and calls <code>pc.getStats()</code> every 500 ms.</li>
+                <li>Key stats displayed: <strong>jitter buffer delay</strong>,
+                  avg decode time per frame, FPS, packet loss, NACK count,
+                  network RTT, and estimated playout latency.</li>
+                <li><em>Optional pixel detection:</em> configure the marker region to match
+                  where OBS injects a toggling B/W overlay in the scene. The tool logs
+                  each transition time.</li>
+                <li><em>Optional WebSocket sync:</em> run the included helper script on the
+                  same machine. It controls OBS via obs-websocket and sends
+                  <code>{"state":N,"tSrc":ms}</code> events so absolute latency can be
+                  computed as in Approach 1.</li>
+              </ol>
+            </div>
+          </div>
+        </div>
+
+        <div class="col-md-6">
+          <div class="card bg-body-secondary">
+            <div class="card-header fw-semibold">🧮 Statistics explained</div>
+            <div class="card-body small">
+              <table class="table table-sm table-dark mb-0">
+                <tbody>
+                  <tr><td><strong>Mean</strong></td><td>Average latency over all samples.</td></tr>
+                  <tr><td><strong>Median</strong></td><td>50th percentile — robust to occasional spikes.</td></tr>
+                  <tr><td><strong>p95 / p99</strong></td><td>95th / 99th percentile — worst-case tails.</td></tr>
+                  <tr><td><strong>StdDev</strong></td><td>Jitter: how much latency varies between samples.</td></tr>
+                  <tr><td><strong>Jitter buffer delay</strong></td><td>
+                    From <code>getStats</code>:
+                    <code>jitterBufferDelay / jitterBufferEmittedCount × 1000</code>.
+                    The average time frames spend in the jitter buffer before playback.
+                  </td></tr>
+                  <tr><td><strong>Est. playout latency</strong></td><td>
+                    <code>Date.now() − estimatedPlayoutTimestamp</code>. Rough estimate
+                    (requires sender/receiver clocks to be NTP-synced).
+                  </td></tr>
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+
+        <div class="col-md-6">
+          <div class="card bg-body-secondary">
+            <div class="card-header fw-semibold">🛠 OBS marker setup (for Approach 2)</div>
+            <div class="card-body small">
+              <p>To inject a toggling timing marker into your OBS scene:</p>
+              <ol>
+                <li>Add a <strong>Color Source</strong> (white, 200×200 px) in the top-left
+                  corner of your scene.</li>
+                <li>Use an <strong>OBS Script</strong> (Python or Lua) to toggle the source's
+                  visibility every N ms and emit <code>{"state":N,"tSrc":ms}</code> over a
+                  local WebSocket server.</li>
+                <li>Configure the marker region on the External Stream tab to
+                  match where the white square appears in the decoded video.</li>
+                <li>Connect the WS sync URL on the External Stream tab so this page
+                  receives <code>t_src</code> events.</li>
+              </ol>
+              <p class="mb-0 text-muted">
+                Without the script, pixel detection still logs transition times — useful for
+                qualitative comparison or for benchmarks where you control both sides.
+              </p>
+            </div>
+          </div>
+        </div>
+
+      </div>
+    </div><!-- /helpPane -->
+
+  </div><!-- /tab-content -->
+</div><!-- /container -->
+
+<script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/js/bootstrap.bundle.min.js"
+        integrity="sha384-C6RzsynM9kWDrMNeT87bh95OGNyZPhcTNXj1NW7RuBCsyN/o0jlpcV8Qyq46cDfL"
+        crossorigin="anonymous"></script>
+<script src="https://cdn.jsdelivr.net/npm/ovenplayer/dist/ovenplayer.js"></script>
+
+<script>
+'use strict';
+
+// ─── Configuration ──────────────────────────────────────────────────────────
+const CFG = {
+  MARKER_PX:    64,    // top-left square size in source canvas (px)
+  DETECT_W:     64,    // detection canvas sample size
+  DETECT_H:     64,
+  BRIGHT_HI:    200,   // luminance threshold → "white"
+  BRIGHT_LO:    55,    // luminance threshold → "black"
+  MAX_SAMPLES:  600,   // ring buffer size
+  HIST_BINS:    24,
+  STATS_POLL_MS: 500,  // getStats polling interval (ms)
+  MIN_LATENCY_MS: 1,   // discard samples below this (probably same-frame artefact)
+  MAX_LATENCY_MS: 8000,// discard samples above this (missed transition)
+};
+
+// ─── Shared utilities ────────────────────────────────────────────────────────
+
+function calcStats(latencies) {
+  if (!latencies.length) return null;
+  const s = [...latencies].sort((a, b) => a - b);
+  const n = s.length;
+  const mean = s.reduce((acc, v) => acc + v, 0) / n;
+  const variance = s.reduce((acc, v) => acc + (v - mean) ** 2, 0) / n;
+  const pct = (p) => s[Math.min(Math.floor(n * p), n - 1)];
+  return {
+    count: n, mean,
+    stddev: Math.sqrt(variance),
+    min: s[0], max: s[n - 1],
+    median: pct(0.50),
+    p75: pct(0.75),
+    p95: pct(0.95),
+    p99: pct(0.99),
+  };
+}
+
+function renderStatBadges(container, stats) {
+  if (!stats) {
+    container.innerHTML = '<div class="col text-muted small">No samples yet.</div>';
+    return;
+  }
+  const fields = [
+    ['Count',  stats.count,              '',    'bg-secondary'],
+    ['Mean',   stats.mean.toFixed(1),    ' ms', 'bg-info text-dark'],
+    ['Median', stats.median.toFixed(1),  ' ms', 'bg-primary'],
+    ['p95',    stats.p95.toFixed(1),     ' ms', 'bg-warning text-dark'],
+    ['p99',    stats.p99.toFixed(1),     ' ms', 'bg-danger'],
+    ['Min',    stats.min.toFixed(1),     ' ms', 'bg-success'],
+    ['Max',    stats.max.toFixed(1),     ' ms', 'bg-secondary'],
+    ['StdDev', stats.stddev.toFixed(1),  ' ms', 'bg-secondary'],
+  ];
+  container.innerHTML = fields.map(([label, val, unit, cls]) => `
+    <div class="col-auto text-center">
+      <div class="text-muted" style="font-size:.68rem;letter-spacing:.05em">${label}</div>
+      <span class="badge ${cls} stat-val">${val}${unit}</span>
+    </div>`).join('');
+}
+
+/** DPR-aware canvas resize. Returns {w, h} in CSS pixels. */
+function resizeCanvas(canvas) {
+  const dpr = window.devicePixelRatio || 1;
+  const rect = canvas.getBoundingClientRect();
+  const w = Math.round(rect.width  * dpr) || canvas.offsetWidth  * dpr || 400;
+  const h = Math.round(rect.height * dpr) || canvas.offsetHeight * dpr || 120;
+  if (canvas.width !== w || canvas.height !== h) {
+    canvas.width  = w;
+    canvas.height = h;
+  }
+  return { w, h, dpr };
+}
+
+function renderHistogram(canvas, latencies) {
+  const { w, h } = resizeCanvas(canvas);
+  const ctx = canvas.getContext('2d');
+  ctx.clearRect(0, 0, w, h);
+  if (latencies.length < 2) return;
+
+  const min = Math.min(...latencies);
+  const max = Math.max(...latencies);
+  const range = max - min || 1;
+  const binSize = range / CFG.HIST_BINS;
+  const bins = new Array(CFG.HIST_BINS).fill(0);
+  latencies.forEach(v => {
+    const idx = Math.min(Math.floor((v - min) / binSize), CFG.HIST_BINS - 1);
+    bins[idx]++;
+  });
+  const maxBin = Math.max(...bins) || 1;
+  const PAD = 18;
+  const barW = (w - 4) / CFG.HIST_BINS;
+
+  bins.forEach((count, i) => {
+    const bh = ((count / maxBin) * (h - PAD - 4)) | 0;
+    const x  = 2 + i * barW;
+    const hue = 130 - (i / CFG.HIST_BINS) * 100; // green → red
+    ctx.fillStyle = `hsl(${hue} 75% 50%)`;
+    ctx.fillRect(x + 1, h - PAD - bh, barW - 2, bh);
+  });
+
+  ctx.fillStyle = '#6c757d';
+  ctx.font = `${10 * (window.devicePixelRatio || 1)}px monospace`;
+  const dpr = window.devicePixelRatio || 1;
+  ctx.font = `${Math.max(9, 10) * dpr}px monospace`;
+  const fmt = (v) => v >= 1000 ? `${(v/1000).toFixed(1)}s` : `${v.toFixed(0)}ms`;
+  ctx.fillText(fmt(min),           2,       h - 2);
+  ctx.fillText(fmt((min + max)/2), w/2-20,  h - 2);
+  ctx.fillText(fmt(max),           w - 42,  h - 2);
+}
+
+function renderTimeline(canvas, samples) {
+  const { w, h } = resizeCanvas(canvas);
+  const ctx = canvas.getContext('2d');
+  ctx.clearRect(0, 0, w, h);
+  const recent = samples.slice(-120);
+  if (recent.length < 2) return;
+
+  const vals = recent.map(s => s.latency);
+  const min  = Math.min(...vals);
+  const max  = Math.max(...vals);
+  const range = max - min || 1;
+  const PAD = 4;
+
+  ctx.strokeStyle = '#1de9b6';
+  ctx.lineWidth = 1.5;
+  ctx.beginPath();
+  recent.forEach((s, i) => {
+    const x = (i / (recent.length - 1)) * w;
+    const y = h - PAD - ((s.latency - min) / range) * (h - PAD * 2);
+    i === 0 ? ctx.moveTo(x, y) : ctx.lineTo(x, y);
+  });
+  ctx.stroke();
+
+  // Last value label
+  const last = vals[vals.length - 1];
+  ctx.fillStyle = '#1de9b6';
+  const dpr = window.devicePixelRatio || 1;
+  ctx.font = `${11 * dpr}px monospace`;
+  ctx.fillText(`${last.toFixed(1)} ms`, w - 62 * dpr, 14 * dpr);
+}
+
+function appendLog(el, msg) {
+  const t = performance.now().toFixed(0).padStart(8, ' ');
+  el.textContent += `[${t}ms] ${msg}\n`;
+  el.scrollTop = el.scrollHeight;
+}
+
+function exportCsv(samples, filename) {
+  const header = 'sample,t_src_ms,t_play_ms,latency_ms\n';
+  const rows   = samples.map((s, i) =>
+    `${i + 1},${s.tSrc.toFixed(3)},${s.tPlay.toFixed(3)},${s.latency.toFixed(3)}`
+  ).join('\n');
+  const blob = new Blob([header + rows], { type: 'text/csv' });
+  const a    = document.createElement('a');
+  a.href     = URL.createObjectURL(blob);
+  a.download = filename;
+  a.click();
+  URL.revokeObjectURL(a.href);
+}
+
+function avgLuminance(imageData) {
+  const d = imageData.data;
+  let sum = 0;
+  for (let i = 0; i < d.length; i += 4) {
+    // ITU-R BT.601 luma
+    sum += 0.299 * d[i] + 0.587 * d[i + 1] + 0.114 * d[i + 2];
+  }
+  return sum / (d.length / 4);
+}
+
+// ─── LOOPBACK TEST ──────────────────────────────────────────────────────────
+
+const lb = {
+  pc1: null, pc2: null, stream: null,
+  srcAnimId: null, detectAnimId: null, statsTimer: null,
+  // marker state tracking
+  srcState:  -1,           // current state drawn on source (-1 = not started)
+  detState:  -1,           // last detected state on remote
+  // per-state pending tSrc: pendingBySrc[0] = tSrc when state went to 0, etc.
+  pendingBySrc: [null, null],
+  warmupLeft: 0,
+  samples: [],             // { tSrc, tPlay, latency }
+};
+
+const lbLog       = document.getElementById('lbLog');
+const srcCanvas   = document.getElementById('srcCanvas');
+const srcCtx      = srcCanvas.getContext('2d');
+const remoteVideo = document.getElementById('remoteVideo');
+const detectCanvas= document.getElementById('detectCanvas');
+const detectCtx   = detectCanvas.getContext('2d');
+const lbStatBadges= document.getElementById('lbStatBadges');
+const lbSampleBadge=document.getElementById('lbSampleBadge');
+
+function lbGetInterval() {
+  return parseInt(document.getElementById('toggleInterval').value, 10) || 1500;
+}
+function lbGetWarmup() {
+  return parseInt(document.getElementById('warmupCount').value, 10) || 0;
+}
+
+function drawSource(ts) {
+  const W = srcCanvas.width, H = srcCanvas.height;
+  const interval = lbGetInterval();
+
+  // Background
+  srcCtx.fillStyle = '#0b1020';
+  srcCtx.fillRect(0, 0, W, H);
+
+  // Moving circles
+  for (let i = 0; i < 7; i++) {
+    const x = (Math.sin(ts / 1000 + i * 1.1) * 0.4 + 0.5) * (W - 120) + 60;
+    const y = (Math.cos(ts / 1000 * 0.75 + i * 0.9) * 0.32 + 0.5) * (H - 120) + 60;
+    srcCtx.fillStyle = `hsl(${(ts / 45 + i * 55) % 360} 80% 55%)`;
+    srcCtx.beginPath();
+    srcCtx.arc(x, y, 14 + (i * 6) % 22, 0, Math.PI * 2);
+    srcCtx.fill();
+  }
+
+  // Text overlay
+  srcCtx.fillStyle = '#fff';
+  srcCtx.font = 'bold 34px system-ui';
+  srcCtx.fillText('G2G Source', 80, 88);
+  srcCtx.font = '22px monospace';
+  srcCtx.fillStyle = '#1de9b6';
+  srcCtx.fillText(`t = ${(ts / 1000).toFixed(2)} s`, 80, 128);
+  srcCtx.fillStyle = '#adb5bd';
+  srcCtx.fillText(`samples: ${lb.samples.length}`, 80, 162);
+
+  // Marker toggle
+  const newState = Math.floor(ts / interval) % 2;
+  const tNow = performance.now();
+  if (newState !== lb.srcState) {
+    lb.srcState = newState;
+    lb.pendingBySrc[newState] = tNow; // record toggle time for this state
+  }
+
+  // Draw marker square (top-left CFG.MARKER_PX × CFG.MARKER_PX)
+  srcCtx.fillStyle = lb.srcState === 1 ? '#ffffff' : '#000000';
+  srcCtx.fillRect(0, 0, CFG.MARKER_PX, CFG.MARKER_PX);
+
+  // Label inside marker
+  srcCtx.fillStyle = lb.srcState === 1 ? '#000' : '#fff';
+  srcCtx.font = `bold 14px monospace`;
+  srcCtx.textAlign = 'center';
+  srcCtx.fillText(lb.srcState === 1 ? 'W' : 'B', CFG.MARKER_PX / 2, CFG.MARKER_PX / 2 + 5);
+  srcCtx.textAlign = 'left';
+
+  lb.srcAnimId = requestAnimationFrame(drawSource);
+}
+
+function detectLoop() {
+  if (!remoteVideo.videoWidth || !remoteVideo.videoHeight) {
+    lb.detectAnimId = requestAnimationFrame(detectLoop);
+    return;
+  }
+
+  // Sample the top-left CFG.MARKER_PX region of the remote video
+  detectCtx.drawImage(
+    remoteVideo,
+    0, 0, CFG.MARKER_PX, CFG.MARKER_PX,
+    0, 0, CFG.DETECT_W,  CFG.DETECT_H
+  );
+  const imgData = detectCtx.getImageData(0, 0, CFG.DETECT_W, CFG.DETECT_H);
+  const luma    = avgLuminance(imgData);
+
+  let newDet = lb.detState;
+  if      (luma > CFG.BRIGHT_HI) newDet = 1;
+  else if (luma < CFG.BRIGHT_LO)  newDet = 0;
+
+  if (newDet !== lb.detState && newDet !== -1) {
+    lb.detState = newDet;
+    const tPlay = performance.now();
+    const tSrc  = lb.pendingBySrc[newDet];
+
+    if (tSrc !== null) {
+      lb.pendingBySrc[newDet] = null;
+      const latency = tPlay - tSrc;
+
+      if (latency >= CFG.MIN_LATENCY_MS && latency <= CFG.MAX_LATENCY_MS) {
+        if (lb.warmupLeft > 0) {
+          lb.warmupLeft--;
+          appendLog(lbLog, `Warm-up sample discarded: ${latency.toFixed(1)} ms (${lb.warmupLeft} left)`);
+        } else {
+          lb.samples.push({ tSrc, tPlay, latency });
+          if (lb.samples.length > CFG.MAX_SAMPLES) lb.samples.shift();
+          updateLbStats();
+          appendLog(lbLog, `Sample #${lb.samples.length}: ${latency.toFixed(1)} ms (→ ${newDet ? 'white' : 'black'})`);
+        }
+      } else {
+        appendLog(lbLog, `Discarded outlier: ${latency.toFixed(1)} ms`);
+      }
+    }
+  }
+
+  lb.detectAnimId = requestAnimationFrame(detectLoop);
+}
+
+function updateLbStats() {
+  const latencies = lb.samples.map(s => s.latency);
+  const stats = calcStats(latencies);
+  lbSampleBadge.textContent = `${lb.samples.length} samples`;
+  renderStatBadges(lbStatBadges, stats);
+  renderHistogram(document.getElementById('histCanvas'), latencies);
+  renderTimeline(document.getElementById('timelineCanvas'), lb.samples);
+}
+
+async function startLoopback() {
+  stopLoopback();
+  lbLog.textContent = '';
+  appendLog(lbLog, 'Starting loopback test...');
+
+  lb.warmupLeft = lbGetWarmup();
+  lb.srcState   = -1;
+  lb.detState   = -1;
+  lb.pendingBySrc = [null, null];
+
+  const preferred = document.getElementById('codecSelect').value;
+
+  lb.stream = srcCanvas.captureStream(30);
+  requestAnimationFrame(drawSource);
+
+  lb.pc1 = new RTCPeerConnection();
+  lb.pc2 = new RTCPeerConnection();
+
+  lb.pc1.onicecandidate = e => { if (e.candidate && lb.pc2) lb.pc2.addIceCandidate(e.candidate).catch(() => {}); };
+  lb.pc2.onicecandidate = e => { if (e.candidate && lb.pc1) lb.pc1.addIceCandidate(e.candidate).catch(() => {}); };
+
+  lb.pc2.ontrack = e => {
+    remoteVideo.srcObject = e.streams[0];
+    appendLog(lbLog, 'Remote track attached → starting detection loop.');
+    lb.detectAnimId = requestAnimationFrame(detectLoop);
+  };
+
+  lb.pc1.onconnectionstatechange = () =>
+    appendLog(lbLog, `pc1 connection: ${lb.pc1.connectionState}`);
+
+  const track       = lb.stream.getVideoTracks()[0];
+  const transceiver = lb.pc1.addTransceiver(track, { direction: 'sendonly', streams: [lb.stream] });
+
+  // Apply codec preference
+  const caps    = RTCRtpSender.getCapabilities('video')?.codecs ?? [];
+  const wanted  = caps.filter(c => (c.mimeType ?? '').toLowerCase() === `video/${preferred.toLowerCase()}`);
+  if (wanted.length) {
+    try { transceiver.setCodecPreferences(wanted); }
+    catch (e) { appendLog(lbLog, `setCodecPreferences failed: ${e.message}`); }
+  } else {
+    appendLog(lbLog, `Warning: ${preferred} not found in RTCRtpSender.getCapabilities — using browser default.`);
+  }
+
+  try {
+    const offer  = await lb.pc1.createOffer();
+    await lb.pc1.setLocalDescription(offer);
+    await lb.pc2.setRemoteDescription(offer);
+    const answer = await lb.pc2.createAnswer();
+    await lb.pc2.setLocalDescription(answer);
+    await lb.pc1.setRemoteDescription(answer);
+  } catch (e) {
+    appendLog(lbLog, `Signalling error: ${e}`);
+    return;
+  }
+
+  // Periodic getStats log (every 5 s)
+  lb.statsTimer = setInterval(async () => {
+    if (!lb.pc2) return;
+    try {
+      const stats = await lb.pc2.getStats();
+      stats.forEach(r => {
+        if (r.type === 'inbound-rtp' && r.kind === 'video') {
+          const jb = r.jitterBufferDelay && r.jitterBufferEmittedCount
+            ? (r.jitterBufferDelay / r.jitterBufferEmittedCount * 1000).toFixed(1)
+            : '?';
+          const dec = r.totalDecodeTime && r.framesDecoded
+            ? (r.totalDecodeTime / r.framesDecoded * 1000).toFixed(2)
+            : '?';
+          appendLog(lbLog, `getStats ▸ framesDecoded=${r.framesDecoded ?? '?'}  jitterBuf=${jb} ms  decodeTime=${dec} ms/frame`);
+        }
+      });
+    } catch (_) { /* ignore */ }
+  }, 5000);
+
+  document.getElementById('lbStartBtn').disabled = true;
+  document.getElementById('lbStopBtn').disabled  = false;
+  appendLog(lbLog, `Codec pref: ${preferred}${wanted.length ? '' : ' (ignored)'}  Toggle interval: ${lbGetInterval()} ms  Warm-up: ${lbGetWarmup()}`);
+}
+
+function stopLoopback() {
+  if (lb.srcAnimId)    { cancelAnimationFrame(lb.srcAnimId);    lb.srcAnimId    = null; }
+  if (lb.detectAnimId) { cancelAnimationFrame(lb.detectAnimId); lb.detectAnimId = null; }
+  if (lb.statsTimer)   { clearInterval(lb.statsTimer);          lb.statsTimer   = null; }
+  if (lb.stream)       { lb.stream.getTracks().forEach(t => t.stop()); lb.stream = null; }
+  if (lb.pc1)          { lb.pc1.close(); lb.pc1 = null; }
+  if (lb.pc2)          { lb.pc2.close(); lb.pc2 = null; }
+  remoteVideo.srcObject = null;
+  document.getElementById('lbStartBtn').disabled = false;
+  document.getElementById('lbStopBtn').disabled  = true;
+}
+
+document.getElementById('lbStartBtn').onclick = () =>
+  startLoopback().catch(e => appendLog(lbLog, `Error: ${e}`));
+document.getElementById('lbStopBtn').onclick  = stopLoopback;
+document.getElementById('lbClearBtn').onclick = () => {
+  lb.samples = [];
+  lb.pendingBySrc = [null, null];
+  lbSampleBadge.textContent = '0 samples';
+  updateLbStats();
+  appendLog(lbLog, 'Samples cleared.');
+};
+document.getElementById('lbExportBtn').onclick = () => {
+  if (!lb.samples.length) { appendLog(lbLog, 'No samples to export.'); return; }
+  exportCsv(lb.samples, `loopback-latency-${Date.now()}.csv`);
+  appendLog(lbLog, `Exported ${lb.samples.length} samples.`);
+};
+
+
+// ─── EXTERNAL STREAM ────────────────────────────────────────────────────────
+
+const ext = {
+  player:         null,
+  pc:             null,
+  statsTimer:     null,
+  detectAnimId:   null,
+  detState:       -1,
+  pendingBySrc:   [null, null],
+  samples:        [],
+  ws:             null,
+};
+
+const extLog      = document.getElementById('extLog');
+const extStatBadges = document.getElementById('extStatBadges');
+const extSampleBadge= document.getElementById('extSampleBadge');
+const extDetCanvas  = document.getElementById('extDetectCanvas');
+const extDetCtx     = extDetCanvas.getContext('2d');
+
+// Capture PCs created by OvenPlayer
+document.addEventListener('_pc_created', (e) => {
+  const pc = e.detail;
+  if (ext.player) {   // only grab PCs while external player is active
+    ext.pc = pc;
+    appendLog(extLog, 'RTCPeerConnection captured → getStats polling starting.');
+    startExtStats();
+  }
+});
+
+function startExternalStream() {
+  stopExternalStream();
+  extLog.textContent = '';
+  const url = document.getElementById('streamUrl').value.trim();
+  if (!url) { appendLog(extLog, 'Enter a stream URL first.'); return; }
+
+  appendLog(extLog, `Connecting to ${url} …`);
+
+  ext.player = OvenPlayer.create('ovpPlayer', {
+    autoStart:    true,
+    mute:         true,
+    sources:      [{ label: 'webrtc', type: 'webrtc', file: url }],
+    webrtcConfig: { timeoutMaxRetry: 6, connectionTimeout: 10000 },
+  });
+
+  ext.player.on('ready',        ()    => appendLog(extLog, 'OvenPlayer ready.'));
+  ext.player.on('stateChanged', info  => appendLog(extLog, `Player state: ${JSON.stringify(info)}`));
+  ext.player.on('error',        err   => appendLog(extLog, `Player error: ${JSON.stringify(err)}`));
+
+  document.getElementById('extStartBtn').disabled = true;
+  document.getElementById('extStopBtn').disabled  = false;
+
+  if (document.getElementById('extPixelDetect').checked) {
+    scheduleExtDetect();
+  }
+}
+
+function startExtStats() {
+  if (!ext.pc || ext.statsTimer) return;
+  document.getElementById('extPollBadge').textContent  = 'Polling';
+  document.getElementById('extPollBadge').className    = 'badge bg-success';
+
+  ext.statsTimer = setInterval(async () => {
+    if (!ext.pc) return;
+    try {
+      const stats = await ext.pc.getStats();
+      renderExtStatsTable(stats);
+    } catch (_) { /* ignore */ }
+  }, CFG.STATS_POLL_MS);
+}
+
+function renderExtStatsTable(stats) {
+  const tbody = document.getElementById('statsTableBody');
+  const rows  = [];
+
+  stats.forEach(r => {
+    if (r.type === 'inbound-rtp' && r.kind === 'video') {
+      const jb = r.jitterBufferDelay && r.jitterBufferEmittedCount
+        ? (r.jitterBufferDelay / r.jitterBufferEmittedCount * 1000).toFixed(2) + ' ms'
+        : '—';
+      const dec = r.totalDecodeTime && r.framesDecoded
+        ? (r.totalDecodeTime / r.framesDecoded * 1000).toFixed(2) + ' ms'
+        : '—';
+      const lossRate = r.packetsReceived > 0
+        ? ((r.packetsLost ?? 0) / r.packetsReceived * 100).toFixed(2) + ' %'
+        : '—';
+
+      rows.push(
+        ['Jitter buffer delay (avg)',  jb],
+        ['Avg decode time / frame',    dec],
+        ['Frames decoded',             r.framesDecoded ?? '—'],
+        ['Frames dropped',             r.framesDropped ?? '—'],
+        ['Frames / second',            r.framesPerSecond?.toFixed(1) ?? '—'],
+        ['Network jitter',             r.jitter !== undefined ? (r.jitter * 1000).toFixed(1) + ' ms' : '—'],
+        ['Packets received',           r.packetsReceived ?? '—'],
+        ['Packets lost',               r.packetsLost ?? '—'],
+        ['Packet loss rate',           lossRate],
+        ['NACK count',                 r.nackCount ?? '—'],
+        ['PLI count',                  r.pliCount  ?? '—'],
+        ['FIR count',                  r.firCount  ?? '—'],
+      );
+
+      if (r.estimatedPlayoutTimestamp) {
+        const diff = Date.now() - r.estimatedPlayoutTimestamp;
+        rows.push(
+          ['estimatedPlayoutTimestamp', r.estimatedPlayoutTimestamp],
+          ['Est. playout latency (NTP)', diff.toFixed(0) + ' ms ⚠ needs NTP sync'],
+        );
+      }
+    }
+
+    if (r.type === 'candidate-pair' && r.nominated) {
+      if (r.currentRoundTripTime !== undefined) {
+        rows.push(['Network RTT', (r.currentRoundTripTime * 1000).toFixed(1) + ' ms']);
+      }
+      if (r.availableOutgoingBitrate !== undefined) {
+        rows.push(['Available bw (out)', (r.availableOutgoingBitrate / 1000).toFixed(0) + ' kbps']);
+      }
+    }
+  });
+
+  if (!rows.length) return;
+  tbody.innerHTML = rows.map(([k, v]) =>
+    `<tr><td class="ps-3 text-muted">${k}</td><td class="font-monospace">${v}</td></tr>`
+  ).join('');
+}
+
+function scheduleExtDetect() {
+  if (ext.detectAnimId) cancelAnimationFrame(ext.detectAnimId);
+  // Wait for OvenPlayer to render a <video> element
+  const tryStart = (attempt) => {
+    const vid = document.querySelector('#ovpPlayer video');
+    if (vid) {
+      appendLog(extLog, 'Pixel detection started on external stream.');
+      runExtDetectLoop(vid);
+    } else if (attempt < 20) {
+      setTimeout(() => tryStart(attempt + 1), 500);
+    } else {
+      appendLog(extLog, 'Pixel detection: could not find <video> element after 10 s.');
+    }
+  };
+  tryStart(0);
+}
+
+function runExtDetectLoop(videoEl) {
+  function loop() {
+    if (!videoEl.videoWidth || !videoEl.videoHeight) {
+      ext.detectAnimId = requestAnimationFrame(loop);
+      return;
+    }
+
+    const vW = videoEl.videoWidth, vH = videoEl.videoHeight;
+    const mx = parseInt(document.getElementById('mX').value) / 100 * vW;
+    const my = parseInt(document.getElementById('mY').value) / 100 * vH;
+    const mw = parseInt(document.getElementById('mW').value) / 100 * vW;
+    const mh = parseInt(document.getElementById('mH').value) / 100 * vH;
+
+    extDetCtx.drawImage(videoEl, mx, my, mw, mh, 0, 0, extDetCanvas.width, extDetCanvas.height);
+    const imgData = extDetCtx.getImageData(0, 0, extDetCanvas.width, extDetCanvas.height);
+    const luma    = avgLuminance(imgData);
+
+    let newDet = ext.detState;
+    if      (luma > CFG.BRIGHT_HI) newDet = 1;
+    else if (luma < CFG.BRIGHT_LO) newDet = 0;
+
+    if (newDet !== ext.detState && newDet !== -1) {
+      ext.detState = newDet;
+      const tPlay = performance.now();
+      appendLog(extLog, `Ext marker → ${newDet ? 'white' : 'black'} detected at t=${tPlay.toFixed(1)} ms`);
+
+      // If WS sync is active and we have a matching pending t_src
+      const tSrc = ext.pendingBySrc[newDet];
+      if (tSrc !== null) {
+        ext.pendingBySrc[newDet] = null;
+        const latency = tPlay - tSrc;
+        if (latency >= CFG.MIN_LATENCY_MS && latency <= CFG.MAX_LATENCY_MS) {
+          ext.samples.push({ tSrc, tPlay, latency });
+          if (ext.samples.length > CFG.MAX_SAMPLES) ext.samples.shift();
+          updateExtStats();
+          appendLog(extLog, `  ↳ latency = ${latency.toFixed(1)} ms (WS-synced)`);
+        } else {
+          appendLog(extLog, `  ↳ outlier discarded: ${latency.toFixed(1)} ms`);
+        }
+      }
+    }
+
+    ext.detectAnimId = requestAnimationFrame(loop);
+  }
+  ext.detectAnimId = requestAnimationFrame(loop);
+}
+
+function updateExtStats() {
+  const latencies = ext.samples.map(s => s.latency);
+  const stats     = calcStats(latencies);
+  extSampleBadge.textContent = `${ext.samples.length} samples`;
+  renderStatBadges(extStatBadges, stats);
+  if (ext.samples.length) {
+    document.getElementById('extLatencyCard').style.removeProperty('display');
+  }
+  renderHistogram(document.getElementById('extHistCanvas'), latencies);
+  renderTimeline(document.getElementById('extTimelineCanvas'), ext.samples);
+}
+
+function stopExternalStream() {
+  if (ext.detectAnimId) { cancelAnimationFrame(ext.detectAnimId); ext.detectAnimId = null; }
+  if (ext.statsTimer)   { clearInterval(ext.statsTimer);          ext.statsTimer   = null; }
+  if (ext.player)       {
+    try { ext.player.remove(); } catch (_) {}
+    ext.player = null;
+    // Re-create empty div for next connect
+    const wrap = document.getElementById('ovpPlayerWrap');
+    wrap.innerHTML = '<div id="ovpPlayer" style="width:100%;height:100%"></div>';
+  }
+  ext.pc         = null;
+  ext.detState   = -1;
+  ext.pendingBySrc = [null, null];
+  document.getElementById('extStartBtn').disabled = false;
+  document.getElementById('extStopBtn').disabled  = true;
+  document.getElementById('extPollBadge').textContent = 'Not polling';
+  document.getElementById('extPollBadge').className   = 'badge bg-secondary';
+  document.getElementById('statsTableBody').innerHTML =
+    '<tr><td colspan="2" class="text-muted text-center ps-3 py-3">Connect to a stream to see stats.</td></tr>';
+}
+
+document.getElementById('extStartBtn').onclick = startExternalStream;
+document.getElementById('extStopBtn').onclick  = stopExternalStream;
+
+document.getElementById('extPixelDetect').onchange = function () {
+  if (this.checked && ext.player) scheduleExtDetect();
+  else if (!this.checked && ext.detectAnimId) {
+    cancelAnimationFrame(ext.detectAnimId); ext.detectAnimId = null;
+    appendLog(extLog, 'Pixel detection disabled.');
+  }
+};
+
+document.getElementById('extExportBtn').onclick = () => {
+  if (!ext.samples.length) { appendLog(extLog, 'No samples to export.'); return; }
+  exportCsv(ext.samples, `ext-latency-${Date.now()}.csv`);
+  appendLog(extLog, `Exported ${ext.samples.length} samples.`);
+};
+document.getElementById('extClearBtn').onclick = () => {
+  ext.samples = [];
+  ext.pendingBySrc = [null, null];
+  extSampleBadge.textContent = '0 samples';
+  updateExtStats();
+  appendLog(extLog, 'Samples cleared.');
+};
+
+// ─── WebSocket source-time sync ──────────────────────────────────────────────
+
+document.getElementById('wsEnable').onchange = function () {
+  document.getElementById('wsSection').classList.toggle('d-none', !this.checked);
+};
+
+document.getElementById('wsConnectBtn').onclick = connectWs;
+document.getElementById('wsDisconnectBtn').onclick = disconnectWs;
+
+function connectWs() {
+  disconnectWs();
+  const url = document.getElementById('wsUrl').value.trim();
+  if (!url) return;
+  appendLog(extLog, `Connecting WebSocket: ${url}`);
+  ext.ws = new WebSocket(url);
+
+  ext.ws.onopen = () => {
+    appendLog(extLog, 'WebSocket connected.');
+    document.getElementById('wsConnectBtn').classList.add('d-none');
+    document.getElementById('wsDisconnectBtn').classList.remove('d-none');
+  };
+  ext.ws.onclose = () => {
+    appendLog(extLog, 'WebSocket closed.');
+    document.getElementById('wsConnectBtn').classList.remove('d-none');
+    document.getElementById('wsDisconnectBtn').classList.add('d-none');
+  };
+  ext.ws.onerror = (e) => appendLog(extLog, `WebSocket error: ${e.type}`);
+
+  /**
+   * Expected message format (JSON):
+   *   { "state": 0|1, "tSrc": <performance.now() ms on source machine> }
+   *
+   * Since both sender and receiver run on the same machine,
+   * performance.now() is on the same clock and the comparison is valid.
+   */
+  ext.ws.onmessage = (e) => {
+    let msg;
+    try { msg = JSON.parse(e.data); } catch (_) { return; }
+    if (msg && typeof msg.state === 'number' && typeof msg.tSrc === 'number') {
+      ext.pendingBySrc[msg.state] = msg.tSrc;
+    }
+  };
+}
+
+function disconnectWs() {
+  if (ext.ws) {
+    ext.ws.close();
+    ext.ws = null;
+  }
+}
+</script>
+</body>
+</html>
