@@ -543,9 +543,8 @@ function renderHistogram(canvas, latencies) {
   });
 
   ctx.fillStyle = '#6c757d';
-  ctx.font = `${10 * (window.devicePixelRatio || 1)}px monospace`;
   const dpr = window.devicePixelRatio || 1;
-  ctx.font = `${Math.max(9, 10) * dpr}px monospace`;
+  ctx.font = `${10 * dpr}px monospace`;
   const fmt = (v) => v >= 1000 ? `${(v/1000).toFixed(1)}s` : `${v.toFixed(0)}ms`;
   ctx.fillText(fmt(min),           2,       h - 2);
   ctx.fillText(fmt((min + max)/2), w/2-20,  h - 2);
@@ -993,7 +992,7 @@ function scheduleExtDetect() {
     } else if (attempt < 20) {
       setTimeout(() => tryStart(attempt + 1), 500);
     } else {
-      appendLog(extLog, 'Pixel detection: could not find <video> element after 10 s.');
+      appendLog(extLog, 'Pixel detection: could not find <video> element after 20 attempts (10 s).');
     }
   };
   tryStart(0);
