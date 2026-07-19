@@ -1,0 +1,169 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>webrtc-h264-selftest</title>
+  <style>
+    :root { color-scheme: light dark; }
+    body { font-family: system-ui, sans-serif; margin: 24px; line-height: 1.4; }
+    h1 { margin: 0 0 8px; font-size: 1.4rem; }
+    p { max-width: 80ch; }
+    .row { display: flex; gap: 12px; flex-wrap: wrap; margin: 12px 0; }
+    button { padding: 10px 14px; cursor: pointer; }
+    .grid { display: grid; grid-template-columns: repeat(auto-fit,minmax(280px,1fr)); gap: 16px; margin-top: 16px; }
+    video, canvas, pre { width: 100%; background: #111; border-radius: 8px; }
+    canvas, video { aspect-ratio: 16/9; }
+    pre { padding: 12px; color: #ddd; min-height: 260px; overflow: auto; }
+    .ok { color: #0a8f4d; }
+    .bad { color: #c62828; }
+  </style>
+</head>
+<body>
+  <h1>WebRTC H.264 self-test</h1>
+  <p>This page generates its own moving canvas video, creates two local PeerConnections, and tries to force H.264 using <code>setCodecPreferences()</code>. If H.264 fails here on Kali while VP8 works, H.264 is your issue. If H.264 works here but OME still fails, the problem is OME-specific negotiation rather than general Firefox H.264 support.</p>
+  <div class="row">
+    <button id="runH264">Run H.264 test</button>
+    <button id="runVP8">Run VP8 test</button>
+    <button id="stop">Stop</button>
+  </div>
+  <div class="grid">
+    <div>
+      <strong>Generated source</strong>
+      <canvas id="src" width="1280" height="720"></canvas>
+    </div>
+    <div>
+      <strong>Remote received video</strong>
+      <video id="remote" autoplay playsinline muted></video>
+    </div>
+    <div style="grid-column: 1 / -1;">
+      <strong>Log</strong>
+      <pre id="log"></pre>
+    </div>
+  </div>
+<script>
+const logEl = document.getElementById('log');
+const canvas = document.getElementById('src');
+const ctx = canvas.getContext('2d');
+const remoteVideo = document.getElementById('remote');
+let pc1, pc2, stream, animationId, startedAt;
+
+function log(msg) {
+  const t = new Date().toISOString().split('T')[1].replace('Z','');
+  logEl.textContent += `[${t}] ${msg}\n`;
+  logEl.scrollTop = logEl.scrollHeight;
+}
+
+function drawFrame(ts) {
+  const t = ts / 1000;
+  ctx.fillStyle = '#0b1020';
+  ctx.fillRect(0,0,canvas.width,canvas.height);
+  ctx.fillStyle = '#1de9b6';
+  ctx.font = 'bold 64px system-ui';
+  ctx.fillText('WebRTC self-test', 60, 110);
+  ctx.fillStyle = '#ffffff';
+  ctx.font = '36px ui-monospace, monospace';
+  ctx.fillText(`time ${t.toFixed(2)}s`, 60, 180);
+  ctx.fillText(`rand ${Math.random().toString(16).slice(2,10)}`, 60, 230);
+  for (let i=0;i<8;i++) {
+    const x = (Math.sin(t + i) * 0.4 + 0.5) * (canvas.width - 160) + 40;
+    const y = (Math.cos(t * 0.7 + i) * 0.35 + 0.5) * (canvas.height - 160) + 40;
+    ctx.fillStyle = `hsl(${(t*70+i*40)%360} 85% 55%)`;
+    ctx.beginPath();
+    ctx.arc(x, y, 30 + ((i*7)%25), 0, Math.PI*2);
+    ctx.fill();
+  }
+  animationId = requestAnimationFrame(drawFrame);
+}
+
+function stopAll() {
+  if (animationId) cancelAnimationFrame(animationId);
+  animationId = null;
+  if (stream) stream.getTracks().forEach(t => t.stop());
+  stream = null;
+  if (pc1) pc1.close();
+  if (pc2) pc2.close();
+  pc1 = pc2 = null;
+  remoteVideo.srcObject = null;
+}
+
+async function run(preferred) {
+  stopAll();
+  logEl.textContent = '';
+  log(`Starting test with preferred codec ${preferred}`);
+  stream = canvas.captureStream(30);
+  requestAnimationFrame(drawFrame);
+  pc1 = new RTCPeerConnection();
+  pc2 = new RTCPeerConnection();
+
+  pc1.onicecandidate = e => e.candidate && pc2.addIceCandidate(e.candidate).catch(err => log(`pc2 addIceCandidate error: ${err}`));
+  pc2.onicecandidate = e => e.candidate && pc1.addIceCandidate(e.candidate).catch(err => log(`pc1 addIceCandidate error: ${err}`));
+  pc2.ontrack = e => {
+    remoteVideo.srcObject = e.streams[0];
+    log('pc2 received remote track');
+  };
+  pc1.onconnectionstatechange = () => log(`pc1 connectionState=${pc1.connectionState}`);
+  pc2.onconnectionstatechange = () => log(`pc2 connectionState=${pc2.connectionState}`);
+
+  const track = stream.getVideoTracks()[0];
+  const transceiver = pc1.addTransceiver(track, { direction: 'sendonly', streams: [stream] });
+
+  const caps = RTCRtpSender.getCapabilities('video')?.codecs || [];
+  const wanted = caps.filter(c => (c.mimeType || '').toLowerCase() === `video/${preferred.toLowerCase()}`);
+  log('Available video codecs:');
+  caps.forEach(c => log(`  ${c.mimeType} | ${c.sdpFmtpLine || '-'}`));
+  if (!wanted.length) {
+    log(`Requested codec ${preferred} not found in RTCRtpSender.getCapabilities('video').codecs`);
+    return;
+  }
+  try {
+    transceiver.setCodecPreferences(wanted);
+    log(`Applied setCodecPreferences(${preferred}) with ${wanted.length} matching codec entries`);
+  } catch (e) {
+    log(`setCodecPreferences failed: ${e}`);
+    return;
+  }
+
+  const offer = await pc1.createOffer();
+  log('Offer video m-section:');
+  log(offer.sdp.split('\r\n').filter(l => l.startsWith('m=video') || l.startsWith('a=rtpmap:') || l.startsWith('a=fmtp:')).join('\n'));
+  await pc1.setLocalDescription(offer);
+  await pc2.setRemoteDescription(offer);
+
+  const answer = await pc2.createAnswer();
+  log('Answer video m-section:');
+  log(answer.sdp.split('\r\n').filter(l => l.startsWith('m=video') || l.startsWith('a=inactive') || l.startsWith('a=recvonly') || l.startsWith('a=rtpmap:') || l.startsWith('a=fmtp:')).join('\n'));
+  await pc2.setLocalDescription(answer);
+  await pc1.setRemoteDescription(answer);
+
+  startedAt = performance.now();
+  setTimeout(async () => {
+    const stats = await pc2.getStats();
+    let inboundVideo, codec;
+    stats.forEach(r => {
+      if (r.type === 'inbound-rtp' && r.kind === 'video') inboundVideo = r;
+    });
+    if (inboundVideo && inboundVideo.codecId) codec = stats.get(inboundVideo.codecId);
+    if (codec) {
+      log(`Negotiated codec according to stats: ${codec.mimeType} ${codec.sdpFmtpLine || ''}`);
+    } else {
+      log('No inbound video codec stats found');
+    }
+    const frames = inboundVideo?.framesDecoded ?? inboundVideo?.framesReceived ?? 0;
+    log(`Inbound video frames/packets indicator: ${frames}`);
+    if (codec && codec.mimeType.toLowerCase() === 'video/h264' && frames > 0) {
+      log('RESULT: H.264 works in local WebRTC on this browser. OME issue is likely server-side negotiation specifics.');
+    } else if (preferred.toLowerCase() === 'h264') {
+      log('RESULT: H.264 did not successfully negotiate/decode in this self-test. That strongly points to H.264 being your issue on this Firefox install.');
+    } else {
+      log('RESULT: Non-H.264 test completed; use this as a control.');
+    }
+  }, 2500);
+}
+
+document.getElementById('runH264').onclick = () => run('H264').catch(e => log(`Fatal H264 test error: ${e.stack || e}`));
+document.getElementById('runVP8').onclick = () => run('VP8').catch(e => log(`Fatal VP8 test error: ${e.stack || e}`));
+document.getElementById('stop').onclick = stopAll;
+</script>
+</body>
+</html>
