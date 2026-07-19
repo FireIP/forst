@@ -46,7 +46,7 @@ const logEl = document.getElementById('log');
 const canvas = document.getElementById('src');
 const ctx = canvas.getContext('2d');
 const remoteVideo = document.getElementById('remote');
-let pc1, pc2, stream, animationId, startedAt;
+let pc1, pc2, stream, animationId, startedAt, statsTimerId;
 
 function log(msg) {
   const t = new Date().toISOString().split('T')[1].replace('Z','');
