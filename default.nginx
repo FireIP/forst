@@ -16,7 +16,7 @@ server {
         add_header Cache-Control "public, must-revalidate";
     }
 
-    location /selftest {
+    location = /selftest {
         alias /var/www/stream/webrtc-h264-selftest.html;
         default_type text/html;
     }
