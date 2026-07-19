@@ -98,8 +98,14 @@ async function run(preferred) {
   pc1 = new RTCPeerConnection();
   pc2 = new RTCPeerConnection();
 
-  pc1.onicecandidate = e => e.candidate && pc2.addIceCandidate(e.candidate).catch(err => log(`pc2 addIceCandidate error: ${err}`));
-  pc2.onicecandidate = e => e.candidate && pc1.addIceCandidate(e.candidate).catch(err => log(`pc1 addIceCandidate error: ${err}`));
+  pc1.onicecandidate = e => {
+    if (!e.candidate || !pc2) return;
+    pc2.addIceCandidate(e.candidate).catch(err => log(`pc2 addIceCandidate error: ${err}`));
+  };
+  pc2.onicecandidate = e => {
+    if (!e.candidate || !pc1) return;
+    pc1.addIceCandidate(e.candidate).catch(err => log(`pc1 addIceCandidate error: ${err}`));
+  };
   pc2.ontrack = e => {
     remoteVideo.srcObject = e.streams[0];
     log('pc2 received remote track');
