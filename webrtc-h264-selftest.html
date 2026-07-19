@@ -79,6 +79,8 @@ function drawFrame(ts) {
 function stopAll() {
   if (animationId) cancelAnimationFrame(animationId);
   animationId = null;
+  if (statsTimerId) clearTimeout(statsTimerId);
+  statsTimerId = null;
   if (stream) stream.getTracks().forEach(t => t.stop());
   stream = null;
   if (pc1) pc1.close();
