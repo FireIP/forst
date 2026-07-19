@@ -132,18 +132,22 @@ async function run(preferred) {
     return;
   }
 
-  const offer = await pc1.createOffer();
-  log('Offer video m-section:');
-  log(offer.sdp.split('\r\n').filter(l => l.startsWith('m=video') || l.startsWith('a=rtpmap:') || l.startsWith('a=fmtp:')).join('\n'));
-  await pc1.setLocalDescription(offer);
-  await pc2.setRemoteDescription(offer);
+  try {
+    const offer = await pc1.createOffer();
+    log('Offer video m-section:');
+    log(offer.sdp.split('\r\n').filter(l => l.startsWith('m=video') || l.startsWith('a=rtpmap:') || l.startsWith('a=fmtp:')).join('\n'));
+    await pc1.setLocalDescription(offer);
+    await pc2.setRemoteDescription(offer);
 
-  const answer = await pc2.createAnswer();
-  log('Answer video m-section:');
-  log(answer.sdp.split('\r\n').filter(l => l.startsWith('m=video') || l.startsWith('a=inactive') || l.startsWith('a=recvonly') || l.startsWith('a=rtpmap:') || l.startsWith('a=fmtp:')).join('\n'));
-  await pc2.setLocalDescription(answer);
-  await pc1.setRemoteDescription(answer);
-
+    const answer = await pc2.createAnswer();
+    log('Answer video m-section:');
+    log(answer.sdp.split('\r\n').filter(l => l.startsWith('m=video') || l.startsWith('a=inactive') || l.startsWith('a=recvonly') || l.startsWith('a=rtpmap:') || l.startsWith('a=fmtp:')).join('\n'));
+    await pc2.setLocalDescription(answer);
+    await pc1.setRemoteDescription(answer);
+  } catch (e) {
+    log(`Signaling failed (possibly stopped): ${e}`);
+    return;
+  }
   startedAt = performance.now();
   statsTimerId = setTimeout(async () => {
     if (!pc2) {
