@@ -145,8 +145,18 @@ async function run(preferred) {
   await pc1.setRemoteDescription(answer);
 
   startedAt = performance.now();
-  setTimeout(async () => {
-    const stats = await pc2.getStats();
+  statsTimerId = setTimeout(async () => {
+    if (!pc2) {
+      log('Test stopped before stats could be collected');
+      return;
+    }
+    let stats;
+    try {
+      stats = await pc2.getStats();
+    } catch (e) {
+      log(`getStats failed: ${e}`);
+      return;
+    }
     let inboundVideo, codec;
     stats.forEach(r => {
       if (r.type === 'inbound-rtp' && r.kind === 'video') inboundVideo = r;
