@@ -245,44 +245,43 @@ The test uses two local RTCPeerConnections so no network or OME is required.</pr
               </div>
               <canvas id="extDetectCanvas" width="160" height="90" class="d-none"></canvas>
 
-              <!-- Optional WebSocket source-time sync -->
+              <!-- Optional OBS script source-time sync -->
               <hr class="my-2">
               <div class="form-check form-switch mb-2">
                 <input class="form-check-input" type="checkbox" id="wsEnable" role="switch">
                 <label class="form-check-label" for="wsEnable">
-                  Sync source-time via WebSocket
-                  <span class="badge bg-secondary ms-1" title="Run a local helper that controls OBS marker and sends timestamps">Optional</span>
+                  Sync source-time from OBS script
+                  <span class="badge bg-secondary ms-1" title="Load the copyable OBS Python script from the How it works tab">Optional</span>
                 </label>
               </div>
               <div id="wsSection" class="d-none">
                 <div class="d-flex gap-2 align-items-end mb-1">
                   <div>
-                    <label class="form-label" for="wsUrl">WebSocket URL</label>
+                    <label class="form-label" for="wsUrl">Local event URL</label>
                     <input id="wsUrl" type="text" class="form-control form-control-sm"
-                           value="ws://localhost:9090" placeholder="ws://localhost:9090">
+                           value="http://127.0.0.1:9090/events" placeholder="http://127.0.0.1:9090/events">
                   </div>
-                  <button class="btn btn-sm btn-outline-primary" id="wsConnectBtn">Connect WS</button>
+                  <button class="btn btn-sm btn-outline-primary" id="wsConnectBtn">Connect</button>
                   <button class="btn btn-sm btn-outline-danger d-none" id="wsDisconnectBtn">Disconnect</button>
                 </div>
                 <p class="text-muted small mb-0">
-                  Your helper script sends JSON lines:
-                  <code>{"state":1,"tSrc":&lt;ms&gt;}</code> where <code>tSrc</code> is
-                  <code>Date.now()</code> (Unix epoch milliseconds) on the same machine when the OBS marker toggled.
-                  The page converts it to its local <code>performance.now()</code> time basis.
+                  The OBS script serves source events over local HTTP. Timestamps use Unix epoch
+                  milliseconds and are converted to this page's
+                  <code>performance.now()</code> time basis.
                 </p>
               </div>
 
               <p class="text-muted small mt-2 mb-0">
-                Without WS sync, detection logs <em>when</em> transitions arrive but cannot compute
-                absolute latency. With WS sync, latency = <code>t_play − t_src</code> per toggle.
+                Without source sync, detection logs <em>when</em> transitions arrive but cannot
+                compute absolute latency. With sync, latency = <code>t_play − t_src</code> per toggle.
               </p>
             </div>
           </div>
 
-          <!-- External latency stats (only when WS sync is active) -->
+          <!-- External latency stats (only when source sync is active) -->
           <div class="card bg-body-secondary mt-3" id="extLatencyCard" style="display:none!important">
             <div class="card-header d-flex justify-content-between">
-              <span class="fw-semibold">Pixel-marker Latency (WS-synced)</span>
+              <span class="fw-semibold">Pixel-marker Latency (source-synced)</span>
               <span class="badge bg-primary" id="extSampleBadge">0 samples</span>
             </div>
             <div class="card-body">
@@ -378,11 +377,11 @@ The test uses two local RTCPeerConnections so no network or OME is required.</pr
                 <li><em>Optional pixel detection:</em> configure the marker region to match
                   where OBS injects a toggling B/W overlay in the scene. The tool logs
                   each transition time.</li>
-                <li><em>Optional WebSocket sync:</em> run the included helper script on the
-                  same machine. It controls OBS via obs-websocket and sends
-                  <code>{"state":N,"tSrc":ms}</code> events with <code>tSrc</code> from
-                  <code>Date.now()</code> (Unix epoch milliseconds). The page converts these
-                  timestamps to its local <code>performance.now()</code> time basis.</li>
+                <li><em>Optional source sync:</em> load the included Python script in OBS.
+                  It toggles the OBS marker and serves <code>{"state":N,"tSrc":ms}</code>
+                  events over local HTTP, with <code>tSrc</code> as Unix epoch milliseconds.
+                  The page converts these timestamps to its local
+                  <code>performance.now()</code> time basis.</li>
               </ol>
             </div>
           </div>
@@ -417,118 +416,163 @@ The test uses two local RTCPeerConnections so no network or OME is required.</pr
           <div class="card bg-body-secondary">
             <div class="card-header fw-semibold">🛠 OBS marker setup (for Approach 2)</div>
             <div class="card-body small">
-              <p>
-                Make the scene you want to measure the current program scene. Enable the OBS
-                WebSocket server in <strong>Tools → WebSocket Server Settings</strong> (port
-                <code>4455</code>), then install the helper packages:
-              </p>
-              <pre class="log-box"><code>python -m pip install obsws-python==1.8.0 websockets==15.0.1</code></pre>
-              <p>
-                Set <code>OBS_WEBSOCKET_PASSWORD</code> if authentication is enabled, save the
-                script below as <code>g2g_marker.py</code>, and run
-                <code>python g2g_marker.py</code>. It creates a 200×200 marker in the current
-                scene, toggles it every second, and serves timestamps at
-                <code>ws://localhost:9090</code>. Keep it running while measuring.
-              </p>
+              <p>Set up one OBS scene and load this helper directly in OBS:</p>
+              <ol>
+                <li>In the scene you want to measure, add two <strong>Color Sources</strong>:
+                  name them <code>G2G Latency Marker White</code> and
+                  <code>G2G Latency Marker Black</code>. Set them to white and black, give both
+                  a size of 200×200 px, and place both at the top-left corner above the video.
+                  Start with White visible and Black hidden.</li>
+                <li>In OBS, open <strong>Tools → Scripts</strong>. In the Scripts tab, click
+                  <strong>+</strong> and select <strong>Python Settings</strong> if needed. Point
+                  OBS to a compatible Python installation as instructed in that dialog (OBS's
+                  bundled Python is recommended).</li>
+                <li>Copy the script below to a file named <code>g2g_marker.py</code>. Back in
+                  Scripts, click <strong>+</strong> and select that file. No pip packages,
+                  WebSocket server setting, or password are needed.</li>
+                <li>Make the target scene the current program scene. The script starts toggling
+                  the two named sources and serves timestamp events at
+                  <code>http://127.0.0.1:9090/events</code>. Keep OBS and the script running
+                  while measuring.</li>
+              </ol>
               <div class="d-flex justify-content-between align-items-center mb-1">
-                <span>Copyable Python helper</span>
+                <span>Copyable OBS Python script (OBS API + Python standard library)</span>
                 <button class="btn btn-sm btn-outline-info" id="copyMarkerScriptBtn" type="button">
                   Copy script
                 </button>
               </div>
-              <pre class="log-box"><code id="markerScript">import asyncio
+              <pre class="log-box"><code id="markerScript">import collections
 import json
-import os
+import threading
 import time
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from urllib.parse import parse_qs, urlparse
 
-import obsws_python as obs
-import websockets
-from websockets.asyncio.server import serve
+import obspython as obs
 
-OBS_HOST = "localhost"
-OBS_PORT = 4455
-OBS_PASSWORD = os.environ.get("OBS_WEBSOCKET_PASSWORD", "")
-WS_HOST = "127.0.0.1"
-WS_PORT = 9090
-MARKER_NAME = "G2G Latency Marker"
-MARKER_SIZE = 200
+WHITE_MARKER_NAME = "G2G Latency Marker White"
+BLACK_MARKER_NAME = "G2G Latency Marker Black"
 INTERVAL_MS = 1000
+HTTP_HOST = "127.0.0.1"
+HTTP_PORT = 9090
 
-clients = set()
+events = collections.deque(maxlen=256)
+event_condition = threading.Condition()
+event_id = 0
+http_server = None
+http_thread = None
+missing_source_reported = False
+timer_started = False
 
 
-async def browser_client(websocket):
-    clients.add(websocket)
+class MarkerRequestHandler(BaseHTTPRequestHandler):
+    def do_GET(self):
+        if urlparse(self.path).path != "/events":
+            self.send_error(404)
+            return
+        try:
+            after = int(parse_qs(urlparse(self.path).query).get("after", ["0"])[0])
+        except ValueError:
+            self.send_error(400, "Invalid event cursor")
+            return
+
+        with event_condition:
+            available = [event for event in events if event["id"] > after]
+            if not available:
+                event_condition.wait(timeout=15)
+                available = [event for event in events if event["id"] > after]
+
+        body = json.dumps({"events": available}).encode("utf-8")
+        self.send_response(200)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(body)))
+        self.send_header("Cache-Control", "no-store")
+        self.send_header("Access-Control-Allow-Origin", "*")
+        self.end_headers()
+        try:
+            self.wfile.write(body)
+        except (BrokenPipeError, ConnectionResetError):
+            pass
+
+    def log_message(self, _format, *_args):
+        pass
+
+
+def publish_event(state, timestamp):
+    global event_id
+    with event_condition:
+        event_id += 1
+        events.append({"id": event_id, "state": state, "tSrc": timestamp})
+        event_condition.notify_all()
+
+
+def toggle_marker():
+    global missing_source_reported
+    scene_source = obs.obs_frontend_get_current_scene()
+    if scene_source is None:
+        return
     try:
-        await websocket.wait_closed()
-    finally:
-        clients.discard(websocket)
-
-
-async def main():
-    obs_client = obs.ReqClient(
-        host=OBS_HOST, port=OBS_PORT, **{"password": OBS_PASSWORD}
-    )
-    scene_name = obs_client.get_current_program_scene().current_program_scene_name
-    obs_client.create_input(
-        scene_name=scene_name,
-        input_name=MARKER_NAME,
-        input_kind="color_source_v3",
-        input_settings={"color": 0xFFFFFFFF, "width": MARKER_SIZE, "height": MARKER_SIZE},
-        scene_item_enabled=True,
-    )
-    print(f"Added {MARKER_NAME!r} to scene {scene_name!r}.")
-    print("Enable WS sync in the page and connect to ws://localhost:9090.")
-
-    state = 1
-    try:
-        async with serve(browser_client, WS_HOST, WS_PORT):
-            while True:
-                await asyncio.sleep(INTERVAL_MS / 1000)
-                state = 1 - state
-                t_src = time.time_ns() / 1_000_000
-                obs_client.set_input_settings(
-                    MARKER_NAME,
-                    {"color": 0xFFFFFFFF if state else 0xFF000000},
-                    overlay=True,
+        scene = obs.obs_scene_from_source(scene_source)
+        white_item = obs.obs_scene_find_source(scene, WHITE_MARKER_NAME)
+        black_item = obs.obs_scene_find_source(scene, BLACK_MARKER_NAME)
+        if white_item is None or black_item is None:
+            if not missing_source_reported:
+                obs.script_log(
+                    obs.LOG_WARNING,
+                    "Add the named white and black G2G marker Color Sources to the current program scene.",
                 )
-                message = json.dumps({"state": state, "tSrc": t_src})
-                for websocket in tuple(clients):
-                    try:
-                        await websocket.send(message)
-                    except websockets.exceptions.ConnectionClosed:
-                        clients.discard(websocket)
+                missing_source_reported = True
+            return
+        missing_source_reported = False
+        state = 0 if obs.obs_sceneitem_visible(white_item) else 1
+        timestamp = time.time() * 1000
+        obs.obs_sceneitem_set_visible(white_item, bool(state))
+        obs.obs_sceneitem_set_visible(black_item, not bool(state))
+        publish_event(state, timestamp)
     finally:
-        obs_client.remove_input(MARKER_NAME)
-        print("Removed the marker source.")
+        obs.obs_source_release(scene_source)
 
 
-if __name__ == "__main__":
+def script_description():
+    return "Toggles the G2G Latency Marker source and serves local timestamp events."
+
+
+def script_load(_settings):
+    global http_server, http_thread, timer_started
     try:
-        asyncio.run(main())
-    except KeyboardInterrupt:
-        pass</code></pre>
+        http_server = ThreadingHTTPServer((HTTP_HOST, HTTP_PORT), MarkerRequestHandler)
+        http_server.daemon_threads = True
+        http_thread = threading.Thread(target=http_server.serve_forever, daemon=True)
+        http_thread.start()
+        obs.timer_add(toggle_marker, INTERVAL_MS)
+        timer_started = True
+        obs.script_log(
+            obs.LOG_INFO,
+            "G2G marker sync ready at http://%s:%s/events" % (HTTP_HOST, HTTP_PORT),
+        )
+    except OSError as error:
+        http_server = None
+        obs.script_log(obs.LOG_ERROR, "Could not start G2G marker server: %s" % error)
+
+
+def script_unload():
+    global timer_started
+    if timer_started:
+        obs.timer_remove(toggle_marker)
+        timer_started = False
+    if http_server is not None:
+        http_server.shutdown()
+        http_server.server_close()</code></pre>
               <p>
-                Click <strong>Copy script</strong> to copy the helper. Set the External Stream
-                marker region to match the square (X/Y 0%; adjust W/H for your video size),
-                enable pixel detection and WebSocket sync, then connect to the helper.
+                After loading the script, open the External Stream tab, enable pixel detection
+                and source-time sync, and connect to the URL above. Set the marker region to
+                X/Y 0%; adjust W/H to cover the marker in your decoded video. Use an OBS
+                WebSocket password only for OBS's own separate WebSocket server; this helper
+                does not connect to it.
               </p>
-              <p>To inject a toggling timing marker into your OBS scene:</p>
-              <ol>
-                <li>Without the helper, add a Color Source (white, 200×200 px) to the top-left
-                  of the scene and use an OBS script to toggle it and emit
-                  <code>{"state":N,"tSrc":ms}</code>, with <code>tSrc</code> from
-                  <code>Date.now()</code>.</li>
-                <li>Configure the marker region and WebSocket sync on the External Stream tab.</li>
-              </ol>
               <p class="text-muted" id="markerScriptCopyStatus">
-                Without the helper, pixel detection still logs transition times — useful for
-                qualitative comparison or for benchmarks where you control both sides.
-              </p>
-              <p class="mb-0 text-muted">
-                If you use another helper, send JSON events as
-                <code>{"state":N,"tSrc":ms}</code>, where <code>tSrc</code> is Unix epoch
-                milliseconds.
+                If OBS reports that Python is unavailable, install/configure a compatible Python
+                runtime in Tools → Scripts → Python Settings, then remove and re-add the script.
               </p>
             </div>
           </div>
@@ -996,7 +1040,8 @@ const ext = {
   detState:       -1,
   pendingSrcEvents: [],
   samples:        [],
-  ws:             null,
+  syncController: null,
+  syncSequence:   0,
 };
 
 const extLog      = document.getElementById('extLog');
@@ -1192,7 +1237,7 @@ function runExtDetectLoop(videoEl, generation, player) {
           ext.samples.push({ tSrc, tPlay, latency });
           if (ext.samples.length > CFG.MAX_SAMPLES) ext.samples.shift();
           updateExtStats();
-          appendLog(extLog, `  ↳ latency = ${latency.toFixed(1)} ms (WS-synced)`);
+          appendLog(extLog, `  ↳ latency = ${latency.toFixed(1)} ms (source-synced)`);
         } else {
           appendLog(extLog, `  ↳ outlier discarded: ${latency.toFixed(1)} ms`);
         }
@@ -1261,7 +1306,7 @@ document.getElementById('extClearBtn').onclick = () => {
   appendLog(extLog, 'Samples cleared.');
 };
 
-// ─── WebSocket source-time sync ──────────────────────────────────────────────
+// ─── OBS script source-time sync ──────────────────────────────────────────────
 
 document.getElementById('wsEnable').onchange = function () {
   document.getElementById('wsSection').classList.toggle('d-none', !this.checked);
@@ -1274,7 +1319,7 @@ document.getElementById('copyMarkerScriptBtn').onclick = async () => {
   const status = document.getElementById('markerScriptCopyStatus');
   try {
     await navigator.clipboard.writeText(document.getElementById('markerScript').textContent);
-    status.textContent = 'Python helper copied to clipboard.';
+    status.textContent = 'OBS Python script copied to clipboard.';
   } catch (_) {
     status.textContent = 'Copy unavailable here; select the script above and copy it manually.';
   }
@@ -1284,50 +1329,62 @@ function connectWs() {
   disconnectWs();
   const url = document.getElementById('wsUrl').value.trim();
   if (!url) return;
-  appendLog(extLog, `Connecting WebSocket: ${url}`);
-  ext.ws = new WebSocket(url);
+  let endpoint;
+  try {
+    endpoint = new URL(url);
+    if (endpoint.protocol !== 'http:' && endpoint.protocol !== 'https:') throw new Error();
+  } catch (_) {
+    appendLog(extLog, 'Enter a valid HTTP event URL.');
+    return;
+  }
 
-  const ws = ext.ws;
-  ws.onopen = () => {
-    if (ext.ws !== ws) return;
-    appendLog(extLog, 'WebSocket connected.');
-    document.getElementById('wsConnectBtn').classList.add('d-none');
-    document.getElementById('wsDisconnectBtn').classList.remove('d-none');
-  };
-  ws.onclose = () => {
-    if (ext.ws !== ws) return;
-    ext.ws = null;
-    appendLog(extLog, 'WebSocket closed.');
-    document.getElementById('wsConnectBtn').classList.remove('d-none');
-    document.getElementById('wsDisconnectBtn').classList.add('d-none');
-  };
-  ws.onerror = (e) => {
-    if (ext.ws === ws) appendLog(extLog, `WebSocket error: ${e.type}`);
-  };
+  const controller = new AbortController();
+  ext.syncController = controller;
+  ext.syncSequence = 0;
+  appendLog(extLog, `Connecting to OBS marker events: ${endpoint.href}`);
+  document.getElementById('wsConnectBtn').classList.add('d-none');
+  document.getElementById('wsDisconnectBtn').classList.remove('d-none');
 
-  /**
-   * Expected message format (JSON):
-   *   { "state": 0|1, "tSrc": <Date.now() Unix epoch ms on source machine> }
-   *
-   * The shared epoch timestamp is converted to this page's performance.now()
-   * time basis before it is queued.
-   */
-  ws.onmessage = (e) => {
-     if (ext.ws !== ws || !document.getElementById('wsEnable').checked) return;
-     let msg;
-     try { msg = JSON.parse(e.data); } catch (_) { return; }
-     if (msg && (msg.state === 0 || msg.state === 1) &&
-         typeof msg.tSrc === 'number' && Number.isFinite(msg.tSrc)) {
-       const tSrc = msg.tSrc - (Date.now() - performance.now());
-       addPendingSourceEvent(ext.pendingSrcEvents, msg.state, tSrc);
+  const pollEvents = async () => {
+    let reportedError = false;
+    while (ext.syncController === controller &&
+          document.getElementById('wsEnable').checked) {
+     try {
+       const requestUrl = new URL(endpoint.href);
+       requestUrl.searchParams.set('after', ext.syncSequence);
+       const response = await fetch(requestUrl, {
+         signal: controller.signal,
+         cache: 'no-store',
+       });
+       if (!response.ok) throw new Error(`HTTP ${response.status}`);
+       const payload = await response.json();
+       if (!Array.isArray(payload.events)) throw new Error('Invalid event response');
+       for (const event of payload.events) {
+         if (!event || !Number.isSafeInteger(event.id) || event.id <= ext.syncSequence ||
+             (event.state !== 0 && event.state !== 1) ||
+             typeof event.tSrc !== 'number' || !Number.isFinite(event.tSrc)) continue;
+         ext.syncSequence = event.id;
+         const tSrc = event.tSrc - (Date.now() - performance.now());
+         addPendingSourceEvent(ext.pendingSrcEvents, event.state, tSrc);
+       }
+       if (reportedError) appendLog(extLog, 'OBS marker event connection restored.');
+       reportedError = false;
+     } catch (error) {
+       if (controller.signal.aborted) return;
+       if (!reportedError) appendLog(extLog, `OBS marker event error: ${error.message}`);
+       reportedError = true;
+       await new Promise(resolve => setTimeout(resolve, 1000));
      }
+    }
   };
+  pollEvents();
 }
 
 function disconnectWs() {
-  const ws = ext.ws;
-  ext.ws = null;
-  if (ws) ws.close();
+  const controller = ext.syncController;
+  ext.syncController = null;
+  if (controller) controller.abort();
+  ext.syncSequence = 0;
   ext.pendingSrcEvents = [];
   document.getElementById('wsConnectBtn').classList.remove('d-none');
   document.getElementById('wsDisconnectBtn').classList.add('d-none');
