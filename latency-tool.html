@@ -416,7 +416,8 @@ The test uses two local RTCPeerConnections so no network or OME is required.</pr
           <div class="card bg-body-secondary">
             <div class="card-header fw-semibold">🛠 OBS marker setup (for Approach 2)</div>
             <div class="card-body small">
-              <p>Set up one OBS scene and load this helper directly in OBS:</p>
+              <p>Run OBS and this page's browser on the same computer, then set up one OBS
+                scene and load this helper directly in OBS:</p>
               <ol>
                 <li>In the scene you want to measure, add two <strong>Color Sources</strong>:
                   name them <code>G2G Latency Marker White</code> and
@@ -466,6 +467,22 @@ timer_started = False
 
 
 class MarkerRequestHandler(BaseHTTPRequestHandler):
+    def send_cors_headers(self):
+        self.send_header("Access-Control-Allow-Origin", "*")
+        self.send_header("Access-Control-Allow-Methods", "GET, OPTIONS")
+        self.send_header("Access-Control-Allow-Headers", "Content-Type")
+        if self.headers.get("Access-Control-Request-Private-Network") == "true":
+            self.send_header("Access-Control-Allow-Private-Network", "true")
+
+    def do_OPTIONS(self):
+        if urlparse(self.path).path != "/events":
+            self.send_error(404)
+            return
+        self.send_response(204)
+        self.send_cors_headers()
+        self.send_header("Access-Control-Max-Age", "600")
+        self.end_headers()
+
     def do_GET(self):
         if urlparse(self.path).path != "/events":
             self.send_error(404)
@@ -487,7 +504,7 @@ class MarkerRequestHandler(BaseHTTPRequestHandler):
         self.send_header("Content-Type", "application/json")
         self.send_header("Content-Length", str(len(body)))
         self.send_header("Cache-Control", "no-store")
-        self.send_header("Access-Control-Allow-Origin", "*")
+        self.send_cors_headers()
         self.end_headers()
         try:
             self.wfile.write(body)
@@ -517,9 +534,17 @@ def toggle_marker():
         black_item = obs.obs_scene_find_source(scene, BLACK_MARKER_NAME)
         if white_item is None or black_item is None:
             if not missing_source_reported:
+                scene_name = obs.obs_source_get_name(scene_source)
+                missing = []
+                if white_item is None:
+                    missing.append(WHITE_MARKER_NAME)
+                if black_item is None:
+                    missing.append(BLACK_MARKER_NAME)
                 obs.script_log(
                     obs.LOG_WARNING,
-                    "Add the named white and black G2G marker Color Sources to the current program scene.",
+                    "Marker toggle skipped: current program scene %r is missing %s. Add each "
+                    "as a Color Source directly to this scene (not only to another scene or group)." %
+                    (scene_name, ", ".join(repr(name) for name in missing)),
                 )
                 missing_source_reported = True
             return
@@ -567,12 +592,17 @@ def script_unload():
                 After loading the script, open the External Stream tab, enable pixel detection
                 and source-time sync, and connect to the URL above. Set the marker region to
                 X/Y 0%; adjust W/H to cover the marker in your decoded video. Use an OBS
-                WebSocket password only for OBS's own separate WebSocket server; this helper
-                does not connect to it.
+                browser on the same computer as OBS: the helper listens only on
+                <code>127.0.0.1</code>, so its URL is local to that computer. The helper does
+                not connect to OBS's WebSocket server.
               </p>
               <p class="text-muted" id="markerScriptCopyStatus">
-                If OBS reports that Python is unavailable, install/configure a compatible Python
-                runtime in Tools → Scripts → Python Settings, then remove and re-add the script.
+                If the browser reports a network error, check that this browser is on the OBS
+                computer and open <code>http://127.0.0.1:9090/events?after=0</code> in a new tab.
+                A JSON response (including an empty events list) means the local server is
+                reachable. If OBS logs a missing-source warning, add the exact named sources to
+                the program scene shown in that warning. If OBS reports Python unavailable,
+                configure it in Tools → Scripts → Python Settings and reload the script.
               </p>
             </div>
           </div>
@@ -1371,7 +1401,9 @@ function connectWs() {
        reportedError = false;
      } catch (error) {
        if (controller.signal.aborted) return;
-       if (!reportedError) appendLog(extLog, `OBS marker event error: ${error.message}`);
+       if (!reportedError) {
+         appendLog(extLog, `OBS marker event error: ${error.message}. Check that the browser is on the OBS computer and that ${endpoint.origin}/events is reachable.`);
+       }
        reportedError = true;
        await new Promise(resolve => setTimeout(resolve, 1000));
      }
