@@ -63,6 +63,9 @@
       <strong>External Stream</strong> connects to a live OME stream and reports
       <code>getStats()</code> timing plus optional pixel-marker detection.
     </p>
+    <p class="text-muted mb-0 small">
+      This page loads Bootstrap and OvenPlayer from jsDelivr and requires network access for those assets.
+    </p>
   </header>
 
   <ul class="nav nav-tabs mb-4" id="mainTabs" role="tablist">
@@ -264,7 +267,8 @@ The test uses two local RTCPeerConnections so no network or OME is required.</pr
                 <p class="text-muted small mb-0">
                   Your helper script sends JSON lines:
                   <code>{"state":1,"tSrc":&lt;ms&gt;}</code> where <code>tSrc</code> is
-                  <code>performance.now()</code> on the same machine when the OBS marker toggled.
+                  <code>Date.now()</code> (Unix epoch milliseconds) on the same machine when the OBS marker toggled.
+                  The page converts it to its local <code>performance.now()</code> time basis.
                 </p>
               </div>
 
@@ -376,8 +380,9 @@ The test uses two local RTCPeerConnections so no network or OME is required.</pr
                   each transition time.</li>
                 <li><em>Optional WebSocket sync:</em> run the included helper script on the
                   same machine. It controls OBS via obs-websocket and sends
-                  <code>{"state":N,"tSrc":ms}</code> events so absolute latency can be
-                  computed as in Approach 1.</li>
+                  <code>{"state":N,"tSrc":ms}</code> events with <code>tSrc</code> from
+                  <code>Date.now()</code> (Unix epoch milliseconds). The page converts these
+                  timestamps to its local <code>performance.now()</code> time basis.</li>
               </ol>
             </div>
           </div>
@@ -418,7 +423,7 @@ The test uses two local RTCPeerConnections so no network or OME is required.</pr
                   corner of your scene.</li>
                 <li>Use an <strong>OBS Script</strong> (Python or Lua) to toggle the source's
                   visibility every N ms and emit <code>{"state":N,"tSrc":ms}</code> over a
-                  local WebSocket server.</li>
+                  local WebSocket server, with <code>tSrc</code> from <code>Date.now()</code>.</li>
                 <li>Configure the marker region on the External Stream tab to
                   match where the white square appears in the decoded video.</li>
                 <li>Connect the WS sync URL on the External Stream tab so this page
@@ -469,11 +474,14 @@ function calcStats(latencies) {
   const mean = s.reduce((acc, v) => acc + v, 0) / n;
   const variance = s.reduce((acc, v) => acc + (v - mean) ** 2, 0) / n;
   const pct = (p) => s[Math.min(Math.floor(n * p), n - 1)];
+  const median = n % 2
+    ? s[Math.floor(n / 2)]
+    : (s[n / 2 - 1] + s[n / 2]) / 2;
   return {
     count: n, mean,
     stddev: Math.sqrt(variance),
     min: s[0], max: s[n - 1],
-    median: pct(0.50),
+    median,
     p75: pct(0.75),
     p95: pct(0.95),
     p99: pct(0.99),
@@ -611,16 +619,29 @@ function avgLuminance(imageData) {
   return sum / (d.length / 4);
 }
 
+function addPendingSourceEvent(events, state, tSrc) {
+  if (events.length < 2) events.push({ state, tSrc });
+}
+
+function takeUnambiguousSourceEvent(events, state) {
+  if (!events.length) return { event: null, ambiguous: false };
+  if (events.length === 1 && events[0].state === state) {
+    return { event: events.shift(), ambiguous: false };
+  }
+  events.length = 0;
+  return { event: null, ambiguous: true };
+}
+
 // ─── LOOPBACK TEST ──────────────────────────────────────────────────────────
 
 const lb = {
   pc1: null, pc2: null, stream: null,
   srcAnimId: null, detectAnimId: null, statsTimer: null,
+  creatingPeerConnections: false,
   // marker state tracking
   srcState:  -1,           // current state drawn on source (-1 = not started)
   detState:  -1,           // last detected state on remote
-  // per-state pending tSrc: pendingBySrc[0] = tSrc when state went to 0, etc.
-  pendingBySrc: [null, null],
+  pendingSrcEvents: [],
   warmupLeft: 0,
   samples: [],             // { tSrc, tPlay, latency }
 };
@@ -674,7 +695,7 @@ function drawSource(ts) {
   const tNow = performance.now();
   if (newState !== lb.srcState) {
     lb.srcState = newState;
-    lb.pendingBySrc[newState] = tNow; // record toggle time for this state
+    addPendingSourceEvent(lb.pendingSrcEvents, newState, tNow);
   }
 
   // Draw marker square (top-left CFG.MARKER_PX × CFG.MARKER_PX)
@@ -713,10 +734,11 @@ function detectLoop() {
   if (newDet !== lb.detState && newDet !== -1) {
     lb.detState = newDet;
     const tPlay = performance.now();
-    const tSrc  = lb.pendingBySrc[newDet];
-
-    if (tSrc !== null) {
-      lb.pendingBySrc[newDet] = null;
+    const { event, ambiguous } = takeUnambiguousSourceEvent(lb.pendingSrcEvents, newDet);
+    if (ambiguous) {
+      appendLog(lbLog, 'Ambiguous marker match discarded.');
+    } else if (event) {
+      const { tSrc } = event;
       const latency = tPlay - tSrc;
 
       if (latency >= CFG.MIN_LATENCY_MS && latency <= CFG.MAX_LATENCY_MS) {
@@ -755,15 +777,20 @@ async function startLoopback() {
   lb.warmupLeft = lbGetWarmup();
   lb.srcState   = -1;
   lb.detState   = -1;
-  lb.pendingBySrc = [null, null];
+  lb.pendingSrcEvents = [];
 
   const preferred = document.getElementById('codecSelect').value;
 
   lb.stream = srcCanvas.captureStream(30);
-  requestAnimationFrame(drawSource);
+  lb.srcAnimId = requestAnimationFrame(drawSource);
 
-  lb.pc1 = new RTCPeerConnection();
-  lb.pc2 = new RTCPeerConnection();
+  lb.creatingPeerConnections = true;
+  try {
+    lb.pc1 = new RTCPeerConnection();
+    lb.pc2 = new RTCPeerConnection();
+  } finally {
+    lb.creatingPeerConnections = false;
+  }
 
   lb.pc1.onicecandidate = e => { if (e.candidate && lb.pc2) lb.pc2.addIceCandidate(e.candidate).catch(() => {}); };
   lb.pc2.onicecandidate = e => { if (e.candidate && lb.pc1) lb.pc1.addIceCandidate(e.candidate).catch(() => {}); };
@@ -799,6 +826,7 @@ async function startLoopback() {
     await lb.pc1.setRemoteDescription(answer);
   } catch (e) {
     appendLog(lbLog, `Signalling error: ${e}`);
+    stopLoopback();
     return;
   }
 
@@ -827,9 +855,10 @@ async function startLoopback() {
 }
 
 function stopLoopback() {
-  if (lb.srcAnimId)    { cancelAnimationFrame(lb.srcAnimId);    lb.srcAnimId    = null; }
-  if (lb.detectAnimId) { cancelAnimationFrame(lb.detectAnimId); lb.detectAnimId = null; }
+  if (lb.srcAnimId !== null)    { cancelAnimationFrame(lb.srcAnimId);    lb.srcAnimId    = null; }
+  if (lb.detectAnimId !== null) { cancelAnimationFrame(lb.detectAnimId); lb.detectAnimId = null; }
   if (lb.statsTimer)   { clearInterval(lb.statsTimer);          lb.statsTimer   = null; }
+  lb.pendingSrcEvents = [];
   if (lb.stream)       { lb.stream.getTracks().forEach(t => t.stop()); lb.stream = null; }
   if (lb.pc1)          { lb.pc1.close(); lb.pc1 = null; }
   if (lb.pc2)          { lb.pc2.close(); lb.pc2 = null; }
@@ -839,11 +868,14 @@ function stopLoopback() {
 }
 
 document.getElementById('lbStartBtn').onclick = () =>
-  startLoopback().catch(e => appendLog(lbLog, `Error: ${e}`));
+  startLoopback().catch(e => {
+    appendLog(lbLog, `Error: ${e}`);
+    stopLoopback();
+  });
 document.getElementById('lbStopBtn').onclick  = stopLoopback;
 document.getElementById('lbClearBtn').onclick = () => {
   lb.samples = [];
-  lb.pendingBySrc = [null, null];
+  lb.pendingSrcEvents = [];
   lbSampleBadge.textContent = '0 samples';
   updateLbStats();
   appendLog(lbLog, 'Samples cleared.');
@@ -862,8 +894,10 @@ const ext = {
   pc:             null,
   statsTimer:     null,
   detectAnimId:   null,
+  detectRetryTimer: null,
+  detectGeneration: 0,
   detState:       -1,
-  pendingBySrc:   [null, null],
+  pendingSrcEvents: [],
   samples:        [],
   ws:             null,
 };
@@ -877,7 +911,7 @@ const extDetCtx     = extDetCanvas.getContext('2d');
 // Capture PCs created by OvenPlayer
 document.addEventListener('_pc_created', (e) => {
   const pc = e.detail;
-  if (ext.player) {   // only grab PCs while external player is active
+  if (ext.player && !lb.creatingPeerConnections) {
     ext.pc = pc;
     appendLog(extLog, 'RTCPeerConnection captured → getStats polling starting.');
     startExtStats();
@@ -937,8 +971,11 @@ function renderExtStatsTable(stats) {
       const dec = r.totalDecodeTime && r.framesDecoded
         ? (r.totalDecodeTime / r.framesDecoded * 1000).toFixed(2) + ' ms'
         : '—';
-      const lossRate = r.packetsReceived > 0
-        ? ((r.packetsLost ?? 0) / r.packetsReceived * 100).toFixed(2) + ' %'
+      const packetsReceived = Math.max(0, r.packetsReceived ?? 0);
+      const packetsLost = Math.max(0, r.packetsLost ?? 0);
+      const expectedPackets = packetsReceived + packetsLost;
+      const lossRate = expectedPackets > 0
+        ? (packetsLost / expectedPackets * 100).toFixed(2) + ' %'
         : '—';
 
       rows.push(
@@ -982,15 +1019,24 @@ function renderExtStatsTable(stats) {
 }
 
 function scheduleExtDetect() {
-  if (ext.detectAnimId) cancelAnimationFrame(ext.detectAnimId);
+  cancelExtDetect();
+  const generation = ext.detectGeneration;
+  const player = ext.player;
+  if (!player || !document.getElementById('extPixelDetect').checked) return;
+  const isCurrent = () => ext.detectGeneration === generation &&
+    ext.player === player && document.getElementById('extPixelDetect').checked;
   // Wait for OvenPlayer to render a <video> element
   const tryStart = (attempt) => {
+    if (!isCurrent()) return;
     const vid = document.querySelector('#ovpPlayer video');
     if (vid) {
       appendLog(extLog, 'Pixel detection started on external stream.');
-      runExtDetectLoop(vid);
+      runExtDetectLoop(vid, generation, player);
     } else if (attempt < 20) {
-      setTimeout(() => tryStart(attempt + 1), 500);
+      ext.detectRetryTimer = setTimeout(() => {
+        ext.detectRetryTimer = null;
+        tryStart(attempt + 1);
+      }, 500);
     } else {
       appendLog(extLog, 'Pixel detection: could not find <video> element after 20 attempts (10 s).');
     }
@@ -998,8 +1044,23 @@ function scheduleExtDetect() {
   tryStart(0);
 }
 
-function runExtDetectLoop(videoEl) {
+function cancelExtDetect() {
+  ext.detectGeneration++;
+  if (ext.detectRetryTimer !== null) {
+    clearTimeout(ext.detectRetryTimer);
+    ext.detectRetryTimer = null;
+  }
+  if (ext.detectAnimId !== null) {
+    cancelAnimationFrame(ext.detectAnimId);
+    ext.detectAnimId = null;
+  }
+}
+
+function runExtDetectLoop(videoEl, generation, player) {
+  const isCurrent = () => ext.detectGeneration === generation &&
+    ext.player === player && document.getElementById('extPixelDetect').checked;
   function loop() {
+    if (!isCurrent()) return;
     if (!videoEl.videoWidth || !videoEl.videoHeight) {
       ext.detectAnimId = requestAnimationFrame(loop);
       return;
@@ -1024,10 +1085,11 @@ function runExtDetectLoop(videoEl) {
       const tPlay = performance.now();
       appendLog(extLog, `Ext marker → ${newDet ? 'white' : 'black'} detected at t=${tPlay.toFixed(1)} ms`);
 
-      // If WS sync is active and we have a matching pending t_src
-      const tSrc = ext.pendingBySrc[newDet];
-      if (tSrc !== null) {
-        ext.pendingBySrc[newDet] = null;
+      const { event, ambiguous } = takeUnambiguousSourceEvent(ext.pendingSrcEvents, newDet);
+      if (ambiguous) {
+        appendLog(extLog, '  ↳ ambiguous source event match discarded.');
+      } else if (event) {
+        const { tSrc } = event;
         const latency = tPlay - tSrc;
         if (latency >= CFG.MIN_LATENCY_MS && latency <= CFG.MAX_LATENCY_MS) {
           ext.samples.push({ tSrc, tPlay, latency });
@@ -1058,7 +1120,7 @@ function updateExtStats() {
 }
 
 function stopExternalStream() {
-  if (ext.detectAnimId) { cancelAnimationFrame(ext.detectAnimId); ext.detectAnimId = null; }
+  cancelExtDetect();
   if (ext.statsTimer)   { clearInterval(ext.statsTimer);          ext.statsTimer   = null; }
   if (ext.player)       {
     try { ext.player.remove(); } catch (_) {}
@@ -1069,7 +1131,7 @@ function stopExternalStream() {
   }
   ext.pc         = null;
   ext.detState   = -1;
-  ext.pendingBySrc = [null, null];
+  ext.pendingSrcEvents = [];
   document.getElementById('extStartBtn').disabled = false;
   document.getElementById('extStopBtn').disabled  = true;
   document.getElementById('extPollBadge').textContent = 'Not polling';
@@ -1083,8 +1145,8 @@ document.getElementById('extStopBtn').onclick  = stopExternalStream;
 
 document.getElementById('extPixelDetect').onchange = function () {
   if (this.checked && ext.player) scheduleExtDetect();
-  else if (!this.checked && ext.detectAnimId) {
-    cancelAnimationFrame(ext.detectAnimId); ext.detectAnimId = null;
+  else if (!this.checked) {
+    cancelExtDetect();
     appendLog(extLog, 'Pixel detection disabled.');
   }
 };
@@ -1096,7 +1158,7 @@ document.getElementById('extExportBtn').onclick = () => {
 };
 document.getElementById('extClearBtn').onclick = () => {
   ext.samples = [];
-  ext.pendingBySrc = [null, null];
+  ext.pendingSrcEvents = [];
   extSampleBadge.textContent = '0 samples';
   updateExtStats();
   appendLog(extLog, 'Samples cleared.');
@@ -1106,6 +1168,7 @@ document.getElementById('extClearBtn').onclick = () => {
 
 document.getElementById('wsEnable').onchange = function () {
   document.getElementById('wsSection').classList.toggle('d-none', !this.checked);
+  if (!this.checked) disconnectWs();
 };
 
 document.getElementById('wsConnectBtn').onclick = connectWs;
@@ -1118,39 +1181,50 @@ function connectWs() {
   appendLog(extLog, `Connecting WebSocket: ${url}`);
   ext.ws = new WebSocket(url);
 
-  ext.ws.onopen = () => {
+  const ws = ext.ws;
+  ws.onopen = () => {
+    if (ext.ws !== ws) return;
     appendLog(extLog, 'WebSocket connected.');
     document.getElementById('wsConnectBtn').classList.add('d-none');
     document.getElementById('wsDisconnectBtn').classList.remove('d-none');
   };
-  ext.ws.onclose = () => {
+  ws.onclose = () => {
+    if (ext.ws !== ws) return;
+    ext.ws = null;
     appendLog(extLog, 'WebSocket closed.');
     document.getElementById('wsConnectBtn').classList.remove('d-none');
     document.getElementById('wsDisconnectBtn').classList.add('d-none');
   };
-  ext.ws.onerror = (e) => appendLog(extLog, `WebSocket error: ${e.type}`);
+  ws.onerror = (e) => {
+    if (ext.ws === ws) appendLog(extLog, `WebSocket error: ${e.type}`);
+  };
 
   /**
    * Expected message format (JSON):
-   *   { "state": 0|1, "tSrc": <performance.now() ms on source machine> }
+   *   { "state": 0|1, "tSrc": <Date.now() Unix epoch ms on source machine> }
    *
-   * Since both sender and receiver run on the same machine,
-   * performance.now() is on the same clock and the comparison is valid.
+   * The shared epoch timestamp is converted to this page's performance.now()
+   * time basis before it is queued.
    */
-  ext.ws.onmessage = (e) => {
-    let msg;
-    try { msg = JSON.parse(e.data); } catch (_) { return; }
-    if (msg && typeof msg.state === 'number' && typeof msg.tSrc === 'number') {
-      ext.pendingBySrc[msg.state] = msg.tSrc;
-    }
+  ws.onmessage = (e) => {
+     if (ext.ws !== ws || !document.getElementById('wsEnable').checked) return;
+     let msg;
+     try { msg = JSON.parse(e.data); } catch (_) { return; }
+     if (msg && (msg.state === 0 || msg.state === 1) &&
+         typeof msg.tSrc === 'number' && Number.isFinite(msg.tSrc)) {
+       const tSrc = msg.tSrc - (Date.now() - performance.now());
+       addPendingSourceEvent(ext.pendingSrcEvents, msg.state, tSrc);
+     }
   };
 }
 
 function disconnectWs() {
-  if (ext.ws) {
-    ext.ws.close();
-    ext.ws = null;
-  }
+  const ws = ext.ws;
+  ext.ws = null;
+  if (ws) ws.close();
+  ext.pendingSrcEvents = [];
+  document.getElementById('wsConnectBtn').classList.remove('d-none');
+  document.getElementById('wsDisconnectBtn').classList.add('d-none');
 }
 </script>
 </body>
