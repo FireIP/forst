@@ -1,35 +1,30 @@
 <!doctype html>
-<html data-bs-theme="dark" lang="en">
+<html lang="en" data-bs-theme="dark">
 <head>
-    <meta charset="utf-8"/>
-    <meta content="width=device-width,initial-scale=1" name="viewport"/>
-    <title>Streams — Quick Gallery</title>
-    <link crossorigin="anonymous" href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/css/bootstrap.min.css"
-          integrity="sha384-T3c6CoIi6uLrA9TneNEoa7RxnatzjcDSCmG1MXxSR1GAsXEV/Dwwykc2MPK8M2HN" rel="stylesheet">
-    <link href="assets/css/main.css" rel="stylesheet">
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Streams — Quick Gallery</title>
+  <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/css/bootstrap.min.css" rel="stylesheet" integrity="sha384-T3c6CoIi6uLrA9TneNEoa7RxnatzjcDSCmG1MXxSR1GAsXEV/Dwwykc2MPK8M2HN" crossorigin="anonymous">
+  <link rel="stylesheet" href="assets/css/main.css">
 </head>
 <body class="bg-dark text-white">
-<div class="container py-4">
+  <div class="container py-4">
     <header class="mb-3">
-        <h1 class="h4 mb-1">Live Streams — Pick one</h1>
-        <p class="text-muted small mb-0">Click a thumbnail to replace it with a low-latency WebRTC player. Multiple
-            players can run simultaneously. Streams that are actually publishing are shown first when Auto-sort is
-            enabled.</p>
+      <h1 class="h4 mb-1">Live Streams — Pick one</h1>
+      <p class="text-muted small mb-0">Click a thumbnail to replace it with a low-latency WebRTC player. Multiple players can run simultaneously. Streams that are actually publishing are shown first when Auto-sort is enabled.</p>
     </header>
-    <div aria-live="polite" class="grid mb-3" id="grid"></div>
-    <div aria-hidden="false" class="d-flex gap-3 align-items-center flex-wrap text-muted small">
-        <div class="form-check">
-            <input class="form-check-input" id="autosort_toggle" type="checkbox"/>
-            <label class="form-check-label" for="autosort_toggle">Auto-sort live streams first</label>
-        </div>
-        <button class="btn btn-sm btn-outline-secondary" id="resetOrderBtn" title="Reset to original order">Reset
-            order
-        </button>
-        <div class="text-muted small" id="dragHint">Drag cards to reorder when Auto-sort is off.</div>
+    <div id="grid" class="grid mb-3" aria-live="polite"></div>
+    <div class="d-flex gap-3 align-items-center flex-wrap text-muted small" aria-hidden="false">
+      <div class="form-check">
+        <input class="form-check-input" type="checkbox" id="autosort_toggle" />
+        <label class="form-check-label" for="autosort_toggle">Auto-sort live streams first</label>
+      </div>
+      <button id="resetOrderBtn" class="btn btn-sm btn-outline-secondary" title="Reset to original order">Reset order</button>
+      <div class="text-muted small" id="dragHint">Drag cards to reorder when Auto-sort is off.</div>
     </div>
-</div>
-<script src="https://cdn.jsdelivr.net/npm/ovenplayer/dist/ovenplayer.js"></script>
-<script src="assets/js/bootstrap.js" type="module"></script>
+  </div>
+  <script src="https://cdn.jsdelivr.net/npm/ovenplayer/dist/ovenplayer.js"></script>
+  <script type="module" src="assets/js/bootstrap.js"></script>
 </body>
 </html>
 

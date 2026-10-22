@@ -46,7 +46,7 @@ const logEl = document.getElementById('log');
 const canvas = document.getElementById('src');
 const ctx = canvas.getContext('2d');
 const remoteVideo = document.getElementById('remote');
-let pc1, pc2, stream, animationId, startedAt, statsTimerId;
+let pc1, pc2, stream, animationId, startedAt;
 
 function log(msg) {
   const t = new Date().toISOString().split('T')[1].replace('Z','');
@@ -79,8 +79,6 @@ function drawFrame(ts) {
 function stopAll() {
   if (animationId) cancelAnimationFrame(animationId);
   animationId = null;
-  if (statsTimerId) clearTimeout(statsTimerId);
-  statsTimerId = null;
   if (stream) stream.getTracks().forEach(t => t.stop());
   stream = null;
   if (pc1) pc1.close();
@@ -98,14 +96,8 @@ async function run(preferred) {
   pc1 = new RTCPeerConnection();
   pc2 = new RTCPeerConnection();
 
-  pc1.onicecandidate = e => {
-    if (!e.candidate || !pc2) return;
-    pc2.addIceCandidate(e.candidate).catch(err => log(`pc2 addIceCandidate error: ${err}`));
-  };
-  pc2.onicecandidate = e => {
-    if (!e.candidate || !pc1) return;
-    pc1.addIceCandidate(e.candidate).catch(err => log(`pc1 addIceCandidate error: ${err}`));
-  };
+  pc1.onicecandidate = e => e.candidate && pc2.addIceCandidate(e.candidate).catch(err => log(`pc2 addIceCandidate error: ${err}`));
+  pc2.onicecandidate = e => e.candidate && pc1.addIceCandidate(e.candidate).catch(err => log(`pc1 addIceCandidate error: ${err}`));
   pc2.ontrack = e => {
     remoteVideo.srcObject = e.streams[0];
     log('pc2 received remote track');
@@ -132,35 +124,21 @@ async function run(preferred) {
     return;
   }
 
-  try {
-    const offer = await pc1.createOffer();
-    log('Offer video m-section:');
-    log(offer.sdp.split('\r\n').filter(l => l.startsWith('m=video') || l.startsWith('a=rtpmap:') || l.startsWith('a=fmtp:')).join('\n'));
-    await pc1.setLocalDescription(offer);
-    await pc2.setRemoteDescription(offer);
+  const offer = await pc1.createOffer();
+  log('Offer video m-section:');
+  log(offer.sdp.split('\r\n').filter(l => l.startsWith('m=video') || l.startsWith('a=rtpmap:') || l.startsWith('a=fmtp:')).join('\n'));
+  await pc1.setLocalDescription(offer);
+  await pc2.setRemoteDescription(offer);
 
-    const answer = await pc2.createAnswer();
-    log('Answer video m-section:');
-    log(answer.sdp.split('\r\n').filter(l => l.startsWith('m=video') || l.startsWith('a=inactive') || l.startsWith('a=recvonly') || l.startsWith('a=rtpmap:') || l.startsWith('a=fmtp:')).join('\n'));
-    await pc2.setLocalDescription(answer);
-    await pc1.setRemoteDescription(answer);
-  } catch (e) {
-    log(`Signaling failed (possibly stopped): ${e}`);
-    return;
-  }
+  const answer = await pc2.createAnswer();
+  log('Answer video m-section:');
+  log(answer.sdp.split('\r\n').filter(l => l.startsWith('m=video') || l.startsWith('a=inactive') || l.startsWith('a=recvonly') || l.startsWith('a=rtpmap:') || l.startsWith('a=fmtp:')).join('\n'));
+  await pc2.setLocalDescription(answer);
+  await pc1.setRemoteDescription(answer);
+
   startedAt = performance.now();
-  statsTimerId = setTimeout(async () => {
-    if (!pc2) {
-      log('Test stopped before stats could be collected');
-      return;
-    }
-    let stats;
-    try {
-      stats = await pc2.getStats();
-    } catch (e) {
-      log(`getStats failed: ${e}`);
-      return;
-    }
+  setTimeout(async () => {
+    const stats = await pc2.getStats();
     let inboundVideo, codec;
     stats.forEach(r => {
       if (r.type === 'inbound-rtp' && r.kind === 'video') inboundVideo = r;
