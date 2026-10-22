@@ -417,21 +417,118 @@ The test uses two local RTCPeerConnections so no network or OME is required.</pr
           <div class="card bg-body-secondary">
             <div class="card-header fw-semibold">🛠 OBS marker setup (for Approach 2)</div>
             <div class="card-body small">
+              <p>
+                Make the scene you want to measure the current program scene. Enable the OBS
+                WebSocket server in <strong>Tools → WebSocket Server Settings</strong> (port
+                <code>4455</code>), then install the helper packages:
+              </p>
+              <pre class="log-box"><code>python -m pip install obsws-python==1.8.0 websockets==15.0.1</code></pre>
+              <p>
+                Set <code>OBS_WEBSOCKET_PASSWORD</code> if authentication is enabled, save the
+                script below as <code>g2g_marker.py</code>, and run
+                <code>python g2g_marker.py</code>. It creates a 200×200 marker in the current
+                scene, toggles it every second, and serves timestamps at
+                <code>ws://localhost:9090</code>. Keep it running while measuring.
+              </p>
+              <div class="d-flex justify-content-between align-items-center mb-1">
+                <span>Copyable Python helper</span>
+                <button class="btn btn-sm btn-outline-info" id="copyMarkerScriptBtn" type="button">
+                  Copy script
+                </button>
+              </div>
+              <pre class="log-box"><code id="markerScript">import asyncio
+import json
+import os
+import time
+
+import obsws_python as obs
+import websockets
+from websockets.asyncio.server import serve
+
+OBS_HOST = "localhost"
+OBS_PORT = 4455
+OBS_PASSWORD = os.environ.get("OBS_WEBSOCKET_PASSWORD", "")
+WS_HOST = "127.0.0.1"
+WS_PORT = 9090
+MARKER_NAME = "G2G Latency Marker"
+MARKER_SIZE = 200
+INTERVAL_MS = 1000
+
+clients = set()
+
+
+async def browser_client(websocket):
+    clients.add(websocket)
+    try:
+        await websocket.wait_closed()
+    finally:
+        clients.discard(websocket)
+
+
+async def main():
+    obs_client = obs.ReqClient(
+        host=OBS_HOST, port=OBS_PORT, **{"password": OBS_PASSWORD}
+    )
+    scene_name = obs_client.get_current_program_scene().current_program_scene_name
+    obs_client.create_input(
+        scene_name=scene_name,
+        input_name=MARKER_NAME,
+        input_kind="color_source_v3",
+        input_settings={"color": 0xFFFFFFFF, "width": MARKER_SIZE, "height": MARKER_SIZE},
+        scene_item_enabled=True,
+    )
+    print(f"Added {MARKER_NAME!r} to scene {scene_name!r}.")
+    print("Enable WS sync in the page and connect to ws://localhost:9090.")
+
+    state = 1
+    try:
+        async with serve(browser_client, WS_HOST, WS_PORT):
+            while True:
+                await asyncio.sleep(INTERVAL_MS / 1000)
+                state = 1 - state
+                t_src = time.time_ns() / 1_000_000
+                obs_client.set_input_settings(
+                    MARKER_NAME,
+                    {"color": 0xFFFFFFFF if state else 0xFF000000},
+                    overlay=True,
+                )
+                message = json.dumps({"state": state, "tSrc": t_src})
+                for websocket in tuple(clients):
+                    try:
+                        await websocket.send(message)
+                    except websockets.exceptions.ConnectionClosed:
+                        clients.discard(websocket)
+    finally:
+        obs_client.remove_input(MARKER_NAME)
+        print("Removed the marker source.")
+
+
+if __name__ == "__main__":
+    try:
+        asyncio.run(main())
+    except KeyboardInterrupt:
+        pass</code></pre>
+              <p>
+                Click <strong>Copy script</strong> to copy the helper. Set the External Stream
+                marker region to match the square (X/Y 0%; adjust W/H for your video size),
+                enable pixel detection and WebSocket sync, then connect to the helper.
+              </p>
               <p>To inject a toggling timing marker into your OBS scene:</p>
               <ol>
-                <li>Add a <strong>Color Source</strong> (white, 200×200 px) in the top-left
-                  corner of your scene.</li>
-                <li>Use an <strong>OBS Script</strong> (Python or Lua) to toggle the source's
-                  visibility every N ms and emit <code>{"state":N,"tSrc":ms}</code> over a
-                  local WebSocket server, with <code>tSrc</code> from <code>Date.now()</code>.</li>
-                <li>Configure the marker region on the External Stream tab to
-                  match where the white square appears in the decoded video.</li>
-                <li>Connect the WS sync URL on the External Stream tab so this page
-                  receives <code>t_src</code> events.</li>
+                <li>Without the helper, add a Color Source (white, 200×200 px) to the top-left
+                  of the scene and use an OBS script to toggle it and emit
+                  <code>{"state":N,"tSrc":ms}</code>, with <code>tSrc</code> from
+                  <code>Date.now()</code>.</li>
+                <li>Configure the marker region and WebSocket sync on the External Stream tab.</li>
               </ol>
-              <p class="mb-0 text-muted">
-                Without the script, pixel detection still logs transition times — useful for
+              <p class="text-muted" id="markerScriptCopyStatus">
+                Without the helper, pixel detection still logs transition times — useful for
                 qualitative comparison or for benchmarks where you control both sides.
+              </p>
+              <p class="mb-0 text-muted">
+                If you use another helper, send JSON events as
+                <code>{"state":N,"tSrc":ms}</code>, where <code>tSrc</code> is Unix epoch
+                milliseconds.
               </p>
             </div>
           </div>
@@ -1173,6 +1270,15 @@ document.getElementById('wsEnable').onchange = function () {
 
 document.getElementById('wsConnectBtn').onclick = connectWs;
 document.getElementById('wsDisconnectBtn').onclick = disconnectWs;
+document.getElementById('copyMarkerScriptBtn').onclick = async () => {
+  const status = document.getElementById('markerScriptCopyStatus');
+  try {
+    await navigator.clipboard.writeText(document.getElementById('markerScript').textContent);
+    status.textContent = 'Python helper copied to clipboard.';
+  } catch (_) {
+    status.textContent = 'Copy unavailable here; select the script above and copy it manually.';
+  }
+};
 
 function connectWs() {
   disconnectWs();
