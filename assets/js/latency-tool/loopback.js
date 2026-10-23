@@ -13,6 +13,7 @@ export function createLoopback(elements) {
     sourceFrame: null,
     detectFrame: null,
     statsTimer: null,
+    generation: 0,
     sourceState: -1,
     detectedState: -1,
     pendingSourceEvents: [],
@@ -126,6 +127,7 @@ export function createLoopback(elements) {
   }
 
   function stop() {
+    state.generation++;
     if (state.sourceFrame !== null) {
       cancelAnimationFrame(state.sourceFrame);
       state.sourceFrame = null;
@@ -158,8 +160,11 @@ export function createLoopback(elements) {
 
   async function start() {
     stop();
+    const generation = state.generation;
     elements.log.textContent = '';
     appendLog(elements.log, 'Starting loopback test...');
+    elements.startButton.disabled = true;
+    elements.stopButton.disabled = false;
 
     state.warmupLeft = getWarmupCount();
     state.sourceState = -1;
@@ -181,23 +186,26 @@ export function createLoopback(elements) {
         else window.__g2gPeerConnectionOwner = previousOwner;
       }
 
-      state.pc1.onicecandidate = event => {
-        if (event.candidate && state.pc2) state.pc2.addIceCandidate(event.candidate).catch(() => {});
+      const pc1 = state.pc1;
+      const pc2 = state.pc2;
+      pc1.onicecandidate = event => {
+        if (generation === state.generation && event.candidate) pc2.addIceCandidate(event.candidate).catch(() => {});
       };
-      state.pc2.onicecandidate = event => {
-        if (event.candidate && state.pc1) state.pc1.addIceCandidate(event.candidate).catch(() => {});
+      pc2.onicecandidate = event => {
+        if (generation === state.generation && event.candidate) pc1.addIceCandidate(event.candidate).catch(() => {});
       };
-      state.pc2.ontrack = event => {
+      pc2.ontrack = event => {
+        if (generation !== state.generation) return;
         elements.remoteVideo.srcObject = event.streams[0];
         appendLog(elements.log, 'Remote track attached → starting detection loop.');
         state.detectFrame = requestAnimationFrame(detectFrame);
       };
-      state.pc1.onconnectionstatechange = () => {
-        if (state.pc1) appendLog(elements.log, `pc1 connection: ${state.pc1.connectionState}`);
+      pc1.onconnectionstatechange = () => {
+        if (generation === state.generation) appendLog(elements.log, `pc1 connection: ${pc1.connectionState}`);
       };
 
       const track = state.stream.getVideoTracks()[0];
-      const transceiver = state.pc1.addTransceiver(track, {
+      const transceiver = pc1.addTransceiver(track, {
         direction: 'sendonly',
         streams: [state.stream],
       });
@@ -215,17 +223,24 @@ export function createLoopback(elements) {
         appendLog(elements.log, `Warning: ${preferredCodec} not found in RTCRtpSender.getCapabilities — using browser default.`);
       }
 
-      const offer = await state.pc1.createOffer();
-      await state.pc1.setLocalDescription(offer);
-      await state.pc2.setRemoteDescription(offer);
-      const answer = await state.pc2.createAnswer();
-      await state.pc2.setLocalDescription(answer);
-      await state.pc1.setRemoteDescription(answer);
+      const offer = await pc1.createOffer();
+      if (generation !== state.generation) return;
+      await pc1.setLocalDescription(offer);
+      if (generation !== state.generation) return;
+      await pc2.setRemoteDescription(offer);
+      if (generation !== state.generation) return;
+      const answer = await pc2.createAnswer();
+      if (generation !== state.generation) return;
+      await pc2.setLocalDescription(answer);
+      if (generation !== state.generation) return;
+      await pc1.setRemoteDescription(answer);
+      if (generation !== state.generation) return;
 
       state.statsTimer = setInterval(async () => {
-        if (!state.pc2) return;
+        if (generation !== state.generation || state.pc2 !== pc2) return;
         try {
-          const stats = await state.pc2.getStats();
+          const stats = await pc2.getStats();
+          if (generation !== state.generation || state.pc2 !== pc2) return;
           stats.forEach(report => {
             if (report.type !== 'inbound-rtp' || report.kind !== 'video') return;
             const jitterBuffer = report.jitterBufferDelay && report.jitterBufferEmittedCount
@@ -243,6 +258,7 @@ export function createLoopback(elements) {
       elements.stopButton.disabled = false;
       appendLog(elements.log, `Codec pref: ${preferredCodec}${wantedCodecs.length ? '' : ' (ignored)'}  Toggle interval: ${getInterval()} ms  Warm-up: ${getWarmupCount()}`);
     } catch (error) {
+      if (generation !== state.generation) return;
       appendLog(elements.log, `Signalling error: ${error}`);
       stop();
     }

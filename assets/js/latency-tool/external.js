@@ -26,9 +26,11 @@ export function createExternalStream(elements) {
     elements.pollBadge.textContent = 'Polling';
     elements.pollBadge.className = 'badge bg-success';
     state.statsTimer = setInterval(async () => {
-      if (!state.peerConnection) return;
+      const peerConnection = state.peerConnection;
+      if (!peerConnection || !state.player) return;
       try {
-        renderStats(await state.peerConnection.getStats());
+        const stats = await peerConnection.getStats();
+        if (state.peerConnection === peerConnection && state.player) renderStats(stats);
       } catch (_) {}
     }, CFG.STATS_POLL_MS);
   }

@@ -48,9 +48,13 @@ export function createObsSync(elements, externalStream) {
           });
           if (!response.ok) throw new Error(`HTTP ${response.status}`);
           const payload = await response.json();
+          if (controller !== requestController || requestController.signal.aborted ||
+              !elements.enabled.checked) return;
           if (!Array.isArray(payload.events)) throw new Error('Invalid event response');
 
           for (const event of payload.events) {
+            if (controller !== requestController || requestController.signal.aborted ||
+                !elements.enabled.checked) return;
             if (!event || !Number.isSafeInteger(event.id) || event.id <= sequence ||
                 (event.state !== 0 && event.state !== 1) ||
                 typeof event.tSrc !== 'number' || !Number.isFinite(event.tSrc)) continue;
