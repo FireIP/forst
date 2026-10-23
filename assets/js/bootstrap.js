@@ -18,14 +18,14 @@ async function init() {
     const resetOrderBtn = document.getElementById('resetOrderBtn');
     const savedAuto = loadAutoSortSetting();
     if (autosortToggle) autosortToggle.checked = savedAuto;
-    setAutoSort(savedAuto, pollLiveStatuses);
+    setAutoSort(savedAuto);
     pollLiveStatuses().catch(() => {
     });
     setInterval(() => pollLiveStatuses().catch(() => {
     }), settings.LIVE_POLL_MS);
     setInterval(() => refreshServerThumbs(), settings.THUMB_SERVER_REFRESH_MS);
 
-    autosortToggle?.addEventListener('change', e => setAutoSort(e.target.checked, pollLiveStatuses));
+    autosortToggle?.addEventListener('change', e => setAutoSort(e.target.checked));
     resetOrderBtn?.addEventListener('click', ev => {
         ev.preventDefault();
         resetOrderToOriginal();

@@ -8,13 +8,6 @@ export function buildMediaUrl(mediaPath) {
     return wsProto + '//' + loc.host + mediaPath;
 }
 
-export function buildManifestUrl(mediaPath) {
-    const loc = window.location;
-    const httpProto = loc.protocol === 'https:' ? 'https:' : 'http:';
-    const base = mediaPath.endsWith('/') ? mediaPath.slice(0, -1) : mediaPath;
-    return `${httpProto}//${loc.host}${base}/llhls.m3u8`;
-}
-
 export function destroyPlayerInstance(player) {
     try {
         if (!player) return;

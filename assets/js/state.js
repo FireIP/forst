@@ -8,7 +8,5 @@ export const runtime = {
     reconnectTimers: {},
     autoSort: true,
     lastReorderAt: 0,
-    fullscreenPaused: false,
-    reorderTimer: null
+    fullscreenPaused: false
 };
-

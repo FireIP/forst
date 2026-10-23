@@ -69,7 +69,7 @@ export function reorderCardsByLive() {
     runtime.lastReorderAt = Date.now();
 }
 
-export function setAutoSort(enabled, pollFn) {
+export function setAutoSort(enabled) {
     runtime.autoSort = !!enabled;
     saveAutoSortSetting(runtime.autoSort);
     const dragHint = document.getElementById('dragHint');
@@ -77,19 +77,9 @@ export function setAutoSort(enabled, pollFn) {
         disableDraggingOnAllCards();
         if (dragHint) dragHint.textContent = 'Auto-sort ist aktiv — Live zuerst.';
         if (!runtime.fullscreenPaused) reorderCardsByLive();
-        if (!runtime.reorderTimer) {
-            runtime.reorderTimer = setInterval(() => {
-                pollFn().catch(() => {
-                });
-            }, settings.LIVE_POLL_MS);
-        }
     } else {
         enableDraggingOnAllCards();
         if (dragHint) dragHint.textContent = 'Ziehe Karten zum Reorden. Reihenfolge wird gespeichert.';
-        if (runtime.reorderTimer) {
-            clearInterval(runtime.reorderTimer);
-            runtime.reorderTimer = null;
-        }
         applyManualOrderIfExists();
     }
 }

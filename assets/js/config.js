@@ -7,6 +7,7 @@ export function applyExternalConfig(cfg) {
         streams: 'streams',
         thumbServerRefreshMs: 'THUMB_SERVER_REFRESH_MS',
         livePollMs: 'LIVE_POLL_MS',
+        liveStatusApiBaseUrl: 'LIVE_STATUS_API_BASE_URL',
         liveFetchTimeoutMs: 'LIVE_FETCH_TIMEOUT_MS',
         reorderMinIntervalMs: 'REORDER_MIN_INTERVAL_MS',
         liveThreshold: 'LIVE_THRESHOLD',

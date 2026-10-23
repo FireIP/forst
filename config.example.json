@@ -4,6 +4,7 @@
   ],
   "thumbServerRefreshMs": 180000,
   "livePollMs": 5000,
+  "liveStatusApiBaseUrl": "/api/live",
   "liveFetchTimeoutMs": 4500,
   "reorderMinIntervalMs": 15000,
   "liveThreshold": 2,
