@@ -1,0 +1,23 @@
+canvas, video { background: #111; border-radius: 6px; display: block; }
+.marker-box {
+  position: absolute; top: 0; left: 0;
+  width: 40px; height: 40px;
+  border: 2px solid #f00;
+  pointer-events: none;
+  border-radius: 3px;
+}
+.video-wrap { position: relative; }
+pre.log-box {
+  background: #0d1117; border-radius: 6px;
+  padding: 12px; max-height: 200px;
+  overflow-y: auto; font-size: 0.78rem; color: #ccc;
+  white-space: pre-wrap; word-break: break-all;
+}
+.stat-val { font-family: monospace; font-size: 1.05rem; }
+#histCanvas, #extHistCanvas { display: block; }
+#timelineCanvas, #extTimelineCanvas { display: block; background: #1a1a2e; border-radius: 6px; }
+.nav-link { cursor: pointer; }
+.form-label { font-size: 0.85rem; margin-bottom: 2px; }
+th { font-size: 0.8rem; font-weight: 600; color: #adb5bd !important; }
+td { font-size: 0.82rem; }
+.badge-row .badge { font-size: 0.85rem; padding: 5px 10px; }
