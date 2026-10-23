@@ -3,6 +3,7 @@ export const settings = {
     streams: [],
     THUMB_SERVER_REFRESH_MS: 3 * 60 * 1000,
     LIVE_POLL_MS: 5000,
+    LIVE_STATUS_API_BASE_URL: '/api/live',
     LIVE_FETCH_TIMEOUT_MS: 4500,
     REORDER_MIN_INTERVAL_MS: 15 * 1000,
     DEFAULT_AUTO_SORT: true,
@@ -12,4 +13,3 @@ export const settings = {
     LS_AUTO_SORT: 'streams_auto_sort_v1',
     LS_MANUAL_ORDER: 'streams_manual_order_v1'
 };
-

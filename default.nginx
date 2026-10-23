@@ -1,3 +1,7 @@
+# Include this file in nginx's http context. The cache directory must be writable by nginx.
+proxy_cache_path /var/cache/nginx/forst-live levels=1:2 keys_zone=forst_live:1m
+                 max_size=10m inactive=1m;
+
 server {
     listen 8090;
     server_name <domain>;
@@ -14,6 +18,29 @@ server {
         autoindex off;
         expires 30s;
         add_header Cache-Control "public, must-revalidate";
+    }
+
+    # Only expose stream lists, never the full OME management API.
+    location ~ ^/api/live/(?<ome_app>[A-Za-z0-9_-]+)$ {
+        if ($request_method != GET) { return 405; }
+        proxy_pass http://127.0.0.1:8081/v1/vhosts/default/apps/$ome_app/streams;
+        # Replace with base64 of the OME Managers/API/AccessToken (no newline).
+        proxy_set_header Authorization "Basic <base64-of-OME-AccessToken>";
+        proxy_set_header Host $proxy_host;
+        proxy_pass_request_body off;
+        proxy_set_header Content-Length "";
+        proxy_hide_header WWW-Authenticate;
+        proxy_connect_timeout 2s;
+        proxy_read_timeout 3s;
+        proxy_cache forst_live;
+        proxy_cache_key "$host$uri";
+        proxy_cache_valid 200 2s;
+        proxy_cache_lock on;
+        add_header Cache-Control "no-store";
+    }
+
+    location /api/live/ {
+        return 404;
     }
 
     location = /selftest/ {
