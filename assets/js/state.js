@@ -9,6 +9,7 @@ export const runtime = {
     autoSort: true,
     lastReorderAt: 0,
     fullscreenPaused: false,
-    reorderTimer: null
+    reorderTimer: null,
+    viewerCounts: {}
 };
 
